@@ -55,7 +55,7 @@ jobs:
       - name: 올릴 파일 고르기
         run: |
           mkdir -p _site
-          cp -r index.html app.js vision.js vision-worker.js match.js ocr.js ai.js sw.js manifest.webmanifest icons vendor _site/
+          cp -r index.html app.js vision.js vision-worker.js match.js ocr.js ai.js share.js config.js sw.js manifest.webmanifest icons vendor _site/
           if [ -f data/pills.json ]; then cp -r data _site/; else echo '::warning::약 데이터 없이 앱만 배포합니다'; fi
           touch _site/.nojekyll
       - uses: actions/upload-pages-artifact@v3

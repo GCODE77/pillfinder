@@ -1,7 +1,7 @@
 # 필파인더 — 세션 핸드오프
 
-- 최종 갱신: 2026-10-27
-- 현재 버전: **v1.0** — 배포됨: https://gcode77.github.io/pillfinder/ (저장소 GCODE77/pillfinder)
+- 최종 갱신: 2026-10-28
+- 현재 버전: **v1.2.0** — 배포됨: https://gcode77.github.io/pillfinder/ (저장소 GCODE77/pillfinder)
 - 저작권: © GLORY KIM
 - 형제 앱: `../약 계수하기`(필카운터, https://gcode77.github.io/pillcounter/) — 같은 디자인·배포 방식
 
@@ -76,3 +76,9 @@ node tests/make-demo.js              # 데모 데이터 다시 만들기
 2. `npm test` 통과 확인.
 3. 커밋 → `main` push. Actions가 데이터(이번 주 캐시 있으면 재사용)와 함께 Pages에 배포.
 4. 커밋 메시지 끝에 `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+
+## 8. v1.2 추가 (2026-10-28)
+
+- 내 약 탭: 즐겨찾기·최근 찾은 약에 **번호**, **선택 → 삭제**, **공유**(Web Share, 없으면 클립보드 복사). 닮은 약 후보에도 순위 번호.
+- **Supabase 공유 학습**(`share.js`, `config.js`): "이 약 맞아요" 지문을 `confirmations` 표에 올리고, 서로 다른 기기 2대 이상이 확인한 약만 내려받아 매칭에 쓴다(하루 1회). `config.js`의 `supabaseUrl`/`anonKey`가 비어 있으면 꺼진다. **anon(publishable) 키만** 넣을 것(service_role·DB 비밀번호 금지). 설정 화면에서 사용자가 참여를 끌 수 있다.
+- 표 SQL: `confirmations(id bigint identity pk, item_seq text, device text, d text, created_at timestamptz default now())`, RLS 켜고 anon에 insert·select 정책만.

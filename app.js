@@ -1,7 +1,8 @@
 // 필파인더 화면 로직
 import { readImprint, warmUpOcr } from './ocr.js';
+import * as SH from './share.js';
 
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '1.2.0';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -11,7 +12,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { toast('저장 공간이 부족합니다'); } },
 };
-const settings = Object.assign({ auto: true, coin: '24', ai: false, aiKey: '', aiModel: 'claude-opus-5-5' }, store.get('pf.settings', {}));
+const settings = Object.assign({ auto: true, share: true, coin: '24', ai: false, aiKey: '', aiModel: 'claude-opus-5-5' }, store.get('pf.settings', {}));
 const saveSettings = () => store.set('pf.settings', settings);
 let favs = store.get('pf.favs', []);
 let hist = store.get('pf.hist', []);
@@ -20,7 +21,15 @@ let learned = store.get('pf.learned', []);
 const packDesc = (d) => { const b = new Int8Array(d.length); for (let i = 0; i < d.length; i++) b[i] = Math.max(-127, Math.min(127, Math.round(d[i] * 32))); let s = ''; for (const v of new Uint8Array(b.buffer)) s += String.fromCharCode(v); return btoa(s); };
 const unpackDesc = (t) => { const s = atob(t), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); const b = new Int8Array(u.buffer); const d = new Float32Array(b.length); for (let i = 0; i < b.length; i++) d[i] = b[i] / 32; return d; };
 let learnedCache = null;
-const learnedDescs = () => (learnedCache ||= learned.map((e) => ({ s: e.s, d: unpackDesc(e.d) })));
+// 공유 학습: 다른 사용자들이 확인한 지문(기기 2대 이상 일치한 것만) — 하루 한 번 새로 받는다
+let shared = store.get('pf.shared', { t: 0, list: [] });
+const learnedDescs = () => (learnedCache ||= [...learned, ...shared.list].map((e) => ({ s: e.s, d: unpackDesc(e.d) })));
+async function syncShared() {
+  if (!SH.enabled() || !settings.share || Date.now() - shared.t < 864e5) return;
+  const list = await SH.download();
+  if (!list) return;
+  shared = { t: Date.now(), list }; learnedCache = null; store.set('pf.shared', shared);
+}
 
 function toast(msg, ms = 2400) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('on');
@@ -87,11 +96,12 @@ const otcBadge = (r) => (r.o ? `<span class="badge ${/전문/.test(r.o) ? 'etc' 
 const sizeTxt = (r) => (r.L ? `${r.L}${r.W && r.W !== r.L ? '×' + r.W : ''}mm` : '');
 const printTxt = (r) => [r.pf, r.pb].filter(Boolean).join(' / ');
 
+const preCard = (x) => (x.key ? `<input type="checkbox" class="ck" tabindex="-1" ${x.checked ? 'checked' : ''}>` : '') + (x.num ? `<span class="num">${x.num}</span>` : '');
 function card(r, extra = {}) {
   const feat = [r.sh, M.dbColors(r).join('·'), printTxt(r) && `<b>${esc(printTxt(r))}</b>`, sizeTxt(r)].filter(Boolean);
   const why = extra.parts ? Object.entries(extra.parts).map(([k, v]) => `<span class="${v > 0.75 ? 'hi' : ''}">${{ shape: '모양', color: '색', aspect: '비율', size: '크기', imprint: '각인', line: '분할선', blank: '빈면', learned: '내가 확인한 약' }[k]} ${Math.round(v * 100)}</span>`).join('') : '';
-  return `<button class="card" data-seq="${esc(r.s)}">
-    <div class="img">${imgOf(r)}</div>
+  return `<button class="card${extra.checked ? ' sel' : ''}" data-seq="${esc(r.s)}"${extra.key ? ` data-key="${esc(extra.key)}"` : ''}>
+    ${preCard(extra)}<div class="img">${imgOf(r)}</div>
     <div class="body"><div class="name">${otcBadge(r)}${esc(r.n)}</div><div class="sub">${esc(r.e)}${r.cl ? ' · ' + esc(r.cl) : ''}</div>
       <div class="feat">${feat.map((f) => `<span>${f.startsWith('<b>') ? f : esc(f)}</span>`).join('')}</div>${why ? `<div class="why">${why}</div>` : ''}</div>
     ${extra.score !== undefined ? `<div class="score">${Math.round(extra.score * 100)}<small>일치</small></div>` : ''}
@@ -99,6 +109,7 @@ function card(r, extra = {}) {
 }
 document.addEventListener('click', (e) => {
   const c = e.target.closest('.card[data-seq]');
+  if (c && c.dataset.key) { toggleSel(c.dataset.key); return; }
   if (c) location.hash = '#/item/' + encodeURIComponent(c.dataset.seq);
 });
 
@@ -455,7 +466,7 @@ function autoObs() {
   }));
   // 확인된 약과 지문 비교(내 폰 사진끼리라 잘 맞는다): 0.35 이상만
   let learnedSim = null;
-  if (learned.length) {
+  if (learned.length || shared.list.length) {
     learnedSim = new Map();
     for (const sd of sides) {
       const q = sd.res.pill.desc; if (!q) continue;
@@ -517,7 +528,7 @@ function rerank() {
   if (!data.ready) { $('#cands').innerHTML = '<div class="empty-msg">약 데이터가 없어 비교할 수 없습니다.</div>'; return; }
   const ranked = M.rank(data.db, currentObs(), { limit: 30 });
   $('#candTitle').textContent = `닮은 약 ${ranked.length ? '' : '— 없음'}`;
-  $('#cands').innerHTML = ranked.map((x) => card(x.r, { score: x.score, parts: x.parts })).join('');
+  $('#cands').innerHTML = ranked.map((x, i) => card(x.r, { score: x.score, parts: x.parts, num: i + 1 })).join('');
   rerank.top = ranked[0];
 }
 
@@ -656,6 +667,10 @@ async function showItem(seq) {
     learnedCache = null;
     store.set('pf.learned', learned);
     if (!favs.includes(seq)) { favs.unshift(seq); store.set('pf.favs', favs); }
+    if (SH.enabled() && settings.share) {
+      const dev = SH.deviceId(store);
+      SH.upload(learned.filter((e) => e.s === seq).slice(0, sides.length).map((e) => ({ item_seq: seq, device: dev, d: e.d }))).then((ok) => { if (ok) toast('기억했고, 다른 사용자와도 공유했어요'); });
+    }
     cb.textContent = '기억했습니다'; cb.disabled = true;
     toast('기억했습니다. 내 약에도 저장했어요');
   });
@@ -673,20 +688,69 @@ async function showItem(seq) {
 }
 
 // ---------- 내 약 · 설정 ----------
+// 내 약 목록: 번호 · 선택 삭제 · 공유
+const mineMode = { fav: false, hist: false };
+const mineSel = { fav: new Set(), hist: new Set() };
+const histKey = (h) => 'hist:' + h.t;
+function toggleSel(key) {
+  const l = key.startsWith('hist:') ? 'hist' : 'fav';
+  mineSel[l].has(key) ? mineSel[l].delete(key) : mineSel[l].add(key);
+  showMine();
+}
+function shareText(seqs) {
+  const lines = seqs.map((s, i) => { const r = data.bySeq.get(s); return r ? `${i + 1}. ${r.n} (${r.e || ''}) ${printTxt(r) ? '[' + printTxt(r) + '] ' : ''}${location.origin}${location.pathname}#/item/${encodeURIComponent(s)}` : null; }).filter(Boolean);
+  return '필파인더 약 목록\n' + lines.join('\n');
+}
+async function shareSeqs(seqs) {
+  if (!seqs.length) { toast('공유할 약이 없습니다'); return; }
+  const text = shareText(seqs);
+  try { if (navigator.share) { await navigator.share({ title: '필파인더 약 목록', text }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+  try { await navigator.clipboard.writeText(text); toast('목록을 복사했습니다'); } catch { toast('복사하지 못했습니다'); }
+}
+function mineBar(l) {
+  if (!(l === 'fav' ? favs.length : hist.length)) return '';
+  if (!mineMode[l]) return `<button class="chip" data-m="${l}-on">선택</button><button class="chip" data-m="${l}-share">전체 공유</button>`;
+  const n = mineSel[l].size;
+  return `<button class="chip" data-m="${l}-all">전체 선택</button><button class="chip" data-m="${l}-share">공유${n ? ` (${n})` : ''}</button><button class="chip danger" data-m="${l}-del">삭제${n ? ` (${n})` : ''}</button><button class="chip" data-m="${l}-off">취소</button>`;
+}
 function showMine() {
   const fl = favs.map((s) => data.bySeq.get(s)).filter(Boolean);
-  $('#favList').innerHTML = fl.length ? fl.map((r) => card(r)).join('') : '<div class="empty-msg">약 상세 화면에서 <b>내 약에 저장</b>을 누르면 여기에 모입니다.</div>';
-  $('#histList').innerHTML = hist.length ? hist.map((h) => {
+  $('#favList').innerHTML = fl.length ? fl.map((r, i) => card(r, { num: i + 1, ...(mineMode.fav ? { key: r.s, checked: mineSel.fav.has(r.s) } : {}) })).join('') : '<div class="empty-msg">약 상세 화면에서 <b>내 약에 저장</b>을 누르면 여기에 모입니다.</div>';
+  $('#histList').innerHTML = hist.length ? hist.map((h, i) => {
     const r = h.seq && data.bySeq.get(h.seq);
     const when = new Date(h.t).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    return `<button class="card" ${r ? `data-seq="${esc(r.s)}"` : ''}><div class="img"><img src="${h.thumb}" alt=""></div>
+    const k = histKey(h), sel = mineMode.hist && mineSel.hist.has(k);
+    return `<button class="card${sel ? ' sel' : ''}" ${mineMode.hist ? `data-seq="${esc(h.seq || 'x')}" data-key="${esc(k)}"` : r ? `data-seq="${esc(r.s)}"` : ''}>${preCard({ num: i + 1, ...(mineMode.hist ? { key: k, checked: sel } : {}) })}<div class="img"><img src="${h.thumb}" alt=""></div>
       <div class="body"><div class="name">${r ? esc(r.n) : '찾지 못함'}</div><div class="sub">${when} · 1순위 후보</div></div></button>`;
   }).join('') : '<div class="empty-msg">아직 찍어서 찾은 약이 없습니다.</div>';
+  $('#favBar').innerHTML = mineBar('fav'); $('#histBar').innerHTML = mineBar('hist');
   $('#sCoin').value = settings.coin;
+  $('#sShare').checked = settings.share; $('#shareRow').classList.toggle('hidden', !SH.enabled());
   $('#sAi').checked = settings.ai; $('#aiBox').classList.toggle('hidden', !settings.ai);
   $('#sKey').value = settings.aiKey; $('#sModel').value = settings.aiModel;
 }
+$('#pgMine').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-m]'); if (!b) return;
+  const [l, act] = b.dataset.m.split('-');
+  const keys = () => (l === 'fav' ? favs : hist.map(histKey));
+  if (act === 'on') { mineMode[l] = true; mineSel[l].clear(); }
+  else if (act === 'off') { mineMode[l] = false; mineSel[l].clear(); }
+  else if (act === 'all') { mineSel[l].size === keys().length ? mineSel[l].clear() : (mineSel[l] = new Set(keys())); }
+  else if (act === 'share') {
+    const pick = mineMode[l] && mineSel[l].size ? mineSel[l] : null;
+    const seqs = l === 'fav' ? favs.filter((s) => !pick || pick.has(s)) : hist.filter((h) => h.seq && (!pick || pick.has(histKey(h)))).map((h) => h.seq);
+    shareSeqs(seqs); return;
+  } else if (act === 'del') {
+    const n = mineSel[l].size; if (!n) { toast('지울 약을 먼저 선택하세요'); return; }
+    if (!confirm(`선택한 ${n}개를 지울까요?`)) return;
+    if (l === 'fav') { favs = favs.filter((s) => !mineSel.fav.has(s)); store.set('pf.favs', favs); }
+    else { hist = hist.filter((h) => !mineSel.hist.has(histKey(h))); store.set('pf.hist', hist); }
+    mineSel[l].clear(); mineMode[l] = false; toast(`${n}개를 지웠습니다`);
+  }
+  showMine();
+});
 $('#sCoin').addEventListener('change', (e) => { settings.coin = e.target.value; saveSettings(); });
+$('#sShare').addEventListener('change', (e) => { settings.share = e.target.checked; saveSettings(); if (settings.share) { shared.t = 0; syncShared(); } });
 $('#sAi').addEventListener('change', (e) => { settings.ai = e.target.checked; saveSettings(); $('#aiBox').classList.toggle('hidden', !settings.ai); });
 $('#sKey').addEventListener('change', (e) => { settings.aiKey = e.target.value.trim(); saveSettings(); toast('키를 이 기기에 저장했습니다'); });
 $('#sModel').addEventListener('change', (e) => { settings.aiModel = e.target.value; saveSettings(); });
@@ -695,3 +759,4 @@ $('#sModel').addEventListener('change', (e) => { settings.aiModel = e.target.val
 $('#ver').textContent = 'v' + APP_VERSION;
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 loadData();
+syncShared();
