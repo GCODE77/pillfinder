@@ -1,7 +1,7 @@
 // 필파인더 화면 로직
 import { readImprint, warmUpOcr } from './ocr.js';
 
-const APP_VERSION = '1.1';
+const APP_VERSION = '1.1.1';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -255,7 +255,7 @@ async function liveLoop() {
     const sctx = small.getContext('2d', { willReadFrequently: true });
     sctx.drawImage(video, 0, 0, sw, sh);
     const img = sctx.getImageData(0, 0, sw, sh);
-    const res = await vision(img, { seed, coin: true }, 4000);
+    const res = await vision(img, { seed, coin: true, face: false }, 4000);
     liveBusy = false;
     if (!live) return;
     lastLive = res;

@@ -291,7 +291,8 @@
     // 실제 사진은 테두리가 거칠어 고조파 바닥값이 0.01~0.02까지 올라온다
     const noise = Math.max(0.008, Math.min(0.03, 0.6 / Math.sqrt(Math.max(areaPx, 1))));
     const z = (k, thr) => Math.max(0, (f.h[k] - noise) / thr);
-    const e = Math.min(1, Math.max(0, (f.aspect - 1.07) / 0.13)); // 길쭉한 정도 0~1
+    // 길쭉한 정도 0~1. 폰을 비스듬히 들면 원형 약도 1.1배 정도 길어 보이므로 1.15까지는 원형으로 본다
+    const e = Math.min(1, Math.max(0, (f.aspect - 1.15) / 0.12));
     const z1 = z(1, 0.06), z3 = z(3, 0.07), z4 = z(4, 0.035), z5 = z(5, 0.035), z6 = z(6, 0.028);
     let z8 = z(8, 0.018);
     z8 = Math.max(0, z8 - 0.7 * z4); // 사각형의 2배음은 팔각형이 아님

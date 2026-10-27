@@ -121,7 +121,8 @@
       const ra = Math.max(r.L, r.W) / Math.min(r.L, r.W);
       const poly = /삼각|오각|육각|팔각|사각/.test(r.sh || '');
       const sig = poly ? 0.2 : 0.11;
-      const d = Math.log(obs.aspect / ra);
+      // 비스듬히 찍은 원형 약(비율 1.15 미만)은 원형 약과 비율 차를 따지지 않는다
+      const d = obs.aspect < 1.15 && ra < 1.05 ? 0 : Math.log(Math.max(obs.aspect, 1) / ra);
       add('aspect', 1.5, Math.exp(-(d * d) / (2 * sig * sig)));
     }
     if (obs.mm && obs.mm.long && r.L) {
