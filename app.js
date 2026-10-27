@@ -2,7 +2,7 @@
 import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 
-const APP_VERSION = '1.2.2';
+const APP_VERSION = '1.3.0';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -93,7 +93,7 @@ function glyph(r) {
 }
 const imgOf = (r, big) => (r.img ? `<img src="${esc(r.img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(document.createRange().createContextualFragment(this.dataset.g))" data-g="${esc(glyph(r))}">` : glyph(r));
 const otcBadge = (r) => (r.o ? `<span class="badge ${/전문/.test(r.o) ? 'etc' : 'otc'}">${esc(/전문/.test(r.o) ? '전문' : '일반')}</span>` : '');
-const sizeTxt = (r) => (r.L ? `${r.L}${r.W && r.W !== r.L ? '×' + r.W : ''}mm` : '');
+const sizeTxt = (r) => (r.L ? [`장 ${r.L}`, r.W && `단 ${r.W}`, r.T && `두께 ${r.T}`].filter(Boolean).join(' · ') + 'mm' : '');
 const printTxt = (r) => [r.pf, r.pb].filter(Boolean).join(' / ');
 
 const preCard = (x) => (x.key ? `<input type="checkbox" class="ck" tabindex="-1" ${x.checked ? 'checked' : ''}>` : '') + (x.num ? `<span class="num">${x.num}</span>` : '');
@@ -114,16 +114,16 @@ document.addEventListener('click', (e) => {
 });
 
 // ---------- 화면 이동 ----------
-const PAGES = { cam: '#pgCam', search: '#pgSearch', shape: '#pgShape', item: '#pgItem', mine: '#pgMine' };
+const PAGES = { cam: '#pgCam', search: '#pgSearch', item: '#pgItem', mine: '#pgMine' };
 function route() {
   const [, page = 'cam', arg] = (location.hash || '#/cam').split('/');
+  if (page === 'shape') { location.replace('#/search'); return; } // 예전 '모양으로' 주소
   const key = PAGES[page] ? page : 'cam';
   if (key !== 'item') document.title = '필파인더 — 찍으면 무슨 약인지';
   for (const k in PAGES) $(PAGES[k]).classList.toggle('on', k === key);
   document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.go === key));
   if (key === 'cam') camEnter(); else camLeave();
-  if (key === 'search') setTimeout(() => $('#q').focus(), 50);
-  if (key === 'shape') runFilter();
+  if (key === 'search') { runFilter(); if (!matchMedia('(pointer:coarse)').matches) setTimeout(() => $('#q').focus(), 50); }
   if (key === 'item') showItem(decodeURIComponent(arg || ''));
   if (key === 'mine') showMine();
   window.scrollTo(0, 0);
@@ -241,8 +241,8 @@ function liveTags(res, srcW) {
   const p = res.pill, tags = [];
   tags.push(`<span class="pill-tag"><b>${esc(p.shapeTop)}</b> · ${esc(p.colorTop.join('/'))} · 비율 ${p.aspect.toFixed(2)}</span>`);
   if (res.coin) {
-    const mm = (p.long / res.coin.long) * Number(settings.coin);
-    tags.push(`<span class="pill-tag">동전 기준 <b>${mm.toFixed(1)}mm</b></span>`);
+    const u = Number(settings.coin) / res.coin.long, mmL = p.long * u, mmS = p.short * u;
+    tags.push(`<span class="pill-tag">동전 기준 <b>장 ${mmL.toFixed(1)} · 단 ${mmS.toFixed(1)}mm</b></span>`);
   }
   if (p.cut) tags.push('<span class="pill-tag warn">약이 화면 밖으로 잘렸어요</span>');
   else if (p.contrast < 12) tags.push('<span class="pill-tag warn">바닥과 색이 비슷해요 — 다른 색 바닥에</span>');
@@ -562,56 +562,50 @@ $('#btnBack').addEventListener('click', () => {
   if (stream) { live = true; liveLoop(); } else if (store.get('pf.camOk', false)) camStart(); else $('#file').click();
 });
 
-// ---------- 이름 검색 ----------
-let qRes = [], qShown = 0;
-function runSearch() {
-  const q = $('#q').value.trim();
-  if (!q) { $('#qList').innerHTML = ''; $('#qInfo').textContent = '약국에서 받은 약 봉투의 이름을 그대로 넣어 보세요.'; $('#qMore').classList.add('hidden'); return; }
-  if (!data.ready) { $('#qInfo').textContent = '약 데이터가 없습니다.'; return; }
-  qRes = M.searchName(data.db, q, 300);
-  qShown = 0;
-  $('#qList').innerHTML = '';
-  $('#qInfo').textContent = qRes.length ? `${qRes.length >= 300 ? '300+' : qRes.length}개` : '찾는 약이 없습니다. 띄어쓰기 없이, 또는 앞 글자만 넣어 보세요.';
-  moreSearch();
-}
-function moreSearch() {
-  const next = qRes.slice(qShown, qShown + 40);
-  $('#qList').insertAdjacentHTML('beforeend', next.map((r) => card(r)).join(''));
-  qShown += next.length;
-  $('#qMore').classList.toggle('hidden', qShown >= qRes.length);
-}
-let qT;
-$('#q').addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(runSearch, 160); });
-$('#qMore').addEventListener('click', moreSearch);
-
-// ---------- 모양으로 찾기 ----------
+// ---------- 약 검색 (이름 · 각인 · 크기 · 모양 · 색 — 아는 것만 넣으면 된다) ----------
 const filt = { shapes: [], colors: [] };
 $('#fShapes').innerHTML = V.SHAPES.map((s) => `<button class="chip" data-shape="${s}">${s}</button>`).join('');
 $('#fColors').innerHTML = COLOR_LIST.map((c) => `<button class="chip" data-color="${c}"><span class="sw" style="background:${SWATCH[c]}"></span>${c}</button>`).join('');
+const toggle = (arr, v) => { const i = arr.indexOf(v); if (i >= 0) arr.splice(i, 1); else arr.push(v); };
 $('#fShapes').addEventListener('click', (e) => { const b = e.target.closest('[data-shape]'); if (!b) return; toggle(filt.shapes, b.dataset.shape); b.classList.toggle('on'); runFilter(); });
 $('#fColors').addEventListener('click', (e) => { const b = e.target.closest('[data-color]'); if (!b) return; toggle(filt.colors, b.dataset.color); b.classList.toggle('on'); runFilter(); });
-const toggle = (arr, v) => { const i = arr.indexOf(v); if (i >= 0) arr.splice(i, 1); else arr.push(v); };
 let fRes = [], fShown = 0, fT;
-$('#fImprint').addEventListener('input', () => { clearTimeout(fT); fT = setTimeout(runFilter, 200); });
+for (const id of ['#q', '#fImprint', '#fL', '#fW', '#fT']) $(id).addEventListener('input', () => { clearTimeout(fT); fT = setTimeout(runFilter, 200); });
 $('#fSimilar').addEventListener('change', runFilter);
-$('#fReset').addEventListener('click', () => { filt.shapes = []; filt.colors = []; $('#fImprint').value = ''; document.querySelectorAll('#fShapes .chip,#fColors .chip').forEach((c) => c.classList.remove('on')); runFilter(); });
+$('#fReset').addEventListener('click', () => {
+  filt.shapes = []; filt.colors = [];
+  for (const id of ['#q', '#fImprint', '#fL', '#fW', '#fT']) $(id).value = '';
+  document.querySelectorAll('#fShapes .chip,#fColors .chip').forEach((c) => c.classList.remove('on'));
+  runFilter();
+});
+const numOf = (id) => { const v = parseFloat(String($(id).value).replace(',', '.')); return v > 0 ? v : 0; };
 function runFilter() {
-  const imprint = $('#fImprint').value.trim();
-  if (!filt.shapes.length && !filt.colors.length && !imprint) { $('#fList').innerHTML = ''; $('#fInfo').textContent = '각인·모양·색 중 아는 것만 골라도 됩니다.'; $('#fMore').classList.add('hidden'); return; }
+  const qn = $('#q').value.trim(), imprint = $('#fImprint').value.trim();
+  const size = { L: numOf('#fL'), W: numOf('#fW'), T: numOf('#fT') };
+  $('#sumShape').textContent = filt.shapes.length ? '모양 · ' + filt.shapes.join(', ') : '모양 (눌러서 고르기)';
+  $('#sumColor').textContent = filt.colors.length ? '색 · ' + filt.colors.join(', ') : '색 (눌러서 고르기)';
+  const any = qn || imprint || filt.shapes.length || filt.colors.length || size.L || size.W || size.T;
+  if (!any) { fRes = []; $('#fList').innerHTML = ''; $('#fInfo').textContent = '아는 것만 넣어도 됩니다. 이름, 각인, 크기, 모양, 색 어느 것이든 좋아요.'; $('#fMore').classList.add('hidden'); return; }
   if (!data.ready) { $('#fInfo').textContent = '약 데이터가 없습니다.'; return; }
-  const f = M.manualFilter({ shapes: filt.shapes, colors: filt.colors, imprint, similarColors: $('#fSimilar').checked });
-  const q = M.normImprint(imprint);
-  fRes = data.db.filter(f);
-  // 각인이 정확히 같은 것 → 앞부분 일치 → 나머지
-  if (q) fRes.sort((a, b) => rankImp(b, q) - rankImp(a, q));
+  const f = M.manualFilter({ shapes: filt.shapes, colors: filt.colors, imprint, similarColors: $('#fSimilar').checked, size });
+  // 이름을 넣었으면 이름 검색 순서를 유지하고, 아니면 각인 일치 → 크기가 가까운 순
+  fRes = (qn ? M.searchName(data.db, qn, 3000) : data.db).filter(f);
+  if (!qn) {
+    const q = M.normImprint(imprint);
+    const gap = (r) => ['L', 'W', 'T'].reduce((s, k) => s + (size[k] ? Math.abs((r[k] || 0) - size[k]) / size[k] : 0), 0);
+    if (q || size.L || size.W || size.T) fRes.sort((a, b) => (q ? rankImp(b, q) - rankImp(a, q) : 0) || gap(a) - gap(b));
+  }
+  $('#sumShape').textContent = filt.shapes.length ? '모양 · ' + filt.shapes.join(', ') : '모양 (눌러서 고르기)';
+  $('#sumColor').textContent = filt.colors.length ? '색 · ' + filt.colors.join(', ') : '색 (눌러서 고르기)';
+  const cond = [qn && `"${qn}"`, imprint && `각인 ${imprint}`, ...filt.shapes, ...filt.colors, size.L && `장축 ${size.L}`, size.W && `단축 ${size.W}`, size.T && `두께 ${size.T}`].filter(Boolean).join(' · ');
   fShown = 0; $('#fList').innerHTML = '';
-  $('#fInfo').textContent = `${fRes.length.toLocaleString()}개`;
+  $('#fInfo').textContent = fRes.length ? `${qn && fRes.length >= 3000 ? '3,000+' : fRes.length.toLocaleString()}개 · ${cond}` : `찾는 약이 없습니다. 조건을 줄여 보세요 (${cond})`;
   moreFilter();
 }
 const rankImp = (r, q) => Math.max(...[r.pf, r.pb].map((t) => { const n = M.normImprint(t); return n === q ? 3 : n.startsWith(q) ? 2 : n.includes(q) ? 1 : 0; }));
 function moreFilter() {
   const next = fRes.slice(fShown, fShown + 40);
-  $('#fList').insertAdjacentHTML('beforeend', next.map((r) => card(r)).join(''));
+  $('#fList').insertAdjacentHTML('beforeend', next.map((r, i) => card(r, { num: fShown + i + 1 })).join(''));
   fShown += next.length;
   $('#fMore').classList.toggle('hidden', fShown >= fRes.length);
 }

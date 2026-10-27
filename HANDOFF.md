@@ -1,7 +1,7 @@
 # 필파인더 — 세션 핸드오프
 
 - 최종 갱신: 2026-10-28
-- 현재 버전: **v1.2.0** — 배포됨: https://gcode77.github.io/pillfinder/ (저장소 GCODE77/pillfinder)
+- 현재 버전: **v1.3.0** — 배포됨: https://gcode77.github.io/pillfinder/ (저장소 GCODE77/pillfinder)
 - 저작권: © GLORY KIM
 - 형제 앱: `../약 계수하기`(필카운터, https://gcode77.github.io/pillcounter/) — 같은 디자인·배포 방식
 
@@ -82,3 +82,10 @@ node tests/make-demo.js              # 데모 데이터 다시 만들기
 - 내 약 탭: 즐겨찾기·최근 찾은 약에 **번호**, **선택 → 삭제**, **공유**(Web Share, 없으면 클립보드 복사). 닮은 약 후보에도 순위 번호.
 - **Supabase 공유 학습**(`share.js`, `config.js`): "이 약 맞아요" 지문을 `confirmations` 표에 올리고, 서로 다른 기기 2대 이상이 확인한 약만 내려받아 매칭에 쓴다(하루 1회). `config.js`의 `supabaseUrl`/`anonKey`가 비어 있으면 꺼진다. **anon(publishable) 키만** 넣을 것(service_role·DB 비밀번호 금지). 설정 화면에서 사용자가 참여를 끌 수 있다.
 - 표 SQL: `confirmations(id bigint identity pk, item_seq text, device text, d text, created_at timestamptz default now())`, RLS 켜고 anon에 insert·select 정책만.
+
+## 9. v1.3 (2026-10-28)
+
+- 탭은 3개: 찍어서 찾기 · **약 검색**(이름+각인+크기+모양+색 통합) · 내 약. `#/shape` 주소는 `#/search`로 넘어간다.
+- 약 검색은 아는 조건만 넣으면 AND로 좁힌다. 크기는 장축·단축·두께(mm), 오차 ±0.6mm 또는 ±6%(`match.js` `sizeOk`). 데이터에 두께가 없는 약은 두께를 넣으면 제외된다.
+- 약 카드와 상세는 장축·단축·두께 3값을 모두 보여 준다. 동전 기준 실시간 태그도 장·단축.
+- 내 약 목록은 카드를 0.5초 꾹 누르면 선택 모드. 카메라 화면은 버튼 높이를 줄이고 촬영 팁을 접었다. 인식선은 노랑 1.6px.

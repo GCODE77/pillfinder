@@ -1,5 +1,5 @@
 // 오프라인 캐시. 앱 파일을 고치면 CACHE 번호를 올려야 사용자에게 새 버전이 간다.
-const CACHE = 'pillfinder-v1.2.2';
+const CACHE = 'pillfinder-v1.3.0';
 const SHELL = [
   './', 'index.html', 'app.js', 'vision.js', 'vision-worker.js', 'match.js', 'ocr.js', 'ai.js', 'share.js', 'config.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/favicon-32.png',

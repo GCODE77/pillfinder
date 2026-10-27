@@ -191,12 +191,16 @@
   }
 
   // ---------- 직접 고르기(칩) 필터 ----------
-  function manualFilter({ shapes = [], colors = [], imprint = '', similarColors = true } = {}) {
+  // 크기 허용 오차(mm): 자로 잰 값은 거칠므로 ±0.6mm 또는 ±6% 중 큰 쪽
+  const sizeTol = (v) => Math.max(0.6, v * 0.06);
+  const sizeOk = (dbv, v) => !v || (dbv > 0 && Math.abs(dbv - v) <= sizeTol(v));
+  function manualFilter({ shapes = [], colors = [], imprint = '', similarColors = true, size = {} } = {}) {
     const cset = new Set(similarColors ? colors.flatMap(COLOR_FAMILY) : colors);
     const q = normImprint(imprint);
     return (r) => {
       if (shapes.length && !shapes.includes(r.sh || '기타')) return false;
       if (cset.size && !dbColors(r).some((c) => cset.has(c))) return false;
+      if (!sizeOk(r.L, size.L) || !sizeOk(r.W, size.W) || !sizeOk(r.T, size.T)) return false;
       if (q) {
         const sides = [normImprint(r.pf), normImprint(r.pb)];
         if (!sides.some((t) => t && (t.includes(q) || (q.length >= 3 && imprintSim(q, t) >= 0.66)))) return false;
