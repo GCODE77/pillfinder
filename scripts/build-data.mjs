@@ -153,7 +153,7 @@ async function main() {
     seen.add(p.s);
     pills.push(p);
   }
-  if (pills.length < 1000) throw new Error(`낱알식별이 ${pills.length}건뿐입니다 — 응답 형식이나 인증키를 확인하세요`);
+  if (!LIMIT && pills.length < 1000) throw new Error(`낱알식별이 ${pills.length}건뿐입니다 — 응답 형식이나 인증키를 확인하세요`);
   pills.sort((a, b) => a.n.localeCompare(b.n, 'ko'));
 
   // 2) 상세 — e약은요(일반약, 쉬운 말) 우선, 없으면 허가사항(전문약 포함)
@@ -178,7 +178,9 @@ async function main() {
 
   if (WITH_PERMIT) {
     // 허가 상세는 페이지마다 문서 전문이 실려 무겁다 → 동시 요청 수를 낮추고 오래 기다린다.
-    const permit = await fetchAll('허가상세', EP.permit, { concurrency: 4, timeout: 90000 });
+    let permit = [];
+    try { permit = await fetchAll('허가상세', EP.permit, { concurrency: 4, timeout: 90000 }); }
+    catch (e) { console.warn(`::warning::허가상세를 건너뜁니다(전문약 효능·용법 없음): ${e.message}`); }
     for (const r of permit) {
       const seq = String(r.ITEM_SEQ ?? '');
       if (!seq) continue;
@@ -218,7 +220,7 @@ async function main() {
     updated: new Date().toISOString(),
     pills: pills.length,
     details: details.size,
-    withPermit: WITH_PERMIT,
+    withPermit: WITH_PERMIT && details.size > easy.length,
     source: '식품의약품안전처 공공데이터(낱알식별·e약은요·의약품 제품 허가정보), 공공데이터포털',
   };
   writeFileSync(resolve(OUT, 'meta.json'), JSON.stringify(meta, null, 2));
