@@ -2,7 +2,7 @@
 import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.2.2';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -221,15 +221,15 @@ function drawOverlay(res, sw, sh, srcW, srcH) {
     o.outline.forEach(([x, y], i) => { const X = f.ox + (x + 0.5) * k * f.s, Y = f.oy + (y + 0.5) * k * f.s; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
     ctx.closePath(); ctx.setLineDash(dash || []); ctx.lineWidth = width; ctx.strokeStyle = color; ctx.stroke();
   };
-  for (const o of res.objects) if (o !== res.pill && o !== res.coin) draw(o, 'rgba(203,213,225,.45)', 1.5, [5, 5]);
-  if (res.coin) draw(res.coin, '#7dd3fc', 2.5, [8, 5]);
+  for (const o of res.objects) if (o !== res.pill && o !== res.coin) draw(o, 'rgba(203,213,225,.4)', 1, [5, 5]);
+  if (res.coin) draw(res.coin, '#7dd3fc', 1.5, [8, 5]);
   if (res.pill) {
-    ctx.shadowColor = 'rgba(0,0,0,.6)'; ctx.shadowBlur = 6;
-    draw(res.pill, '#facc15', 3);
+    ctx.shadowColor = 'rgba(0,0,0,.55)'; ctx.shadowBlur = 4;
+    draw(res.pill, '#facc15', 1.6);
     ctx.shadowBlur = 0;
     // 장축 표시
     const p = res.pill, ca = Math.cos(p.angle), sa = Math.sin(p.angle), h = p.long / 2;
-    ctx.beginPath(); ctx.setLineDash([3, 4]); ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(250,204,21,.7)';
+    ctx.beginPath(); ctx.setLineDash([3, 4]); ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(250,204,21,.6)';
     ctx.moveTo(f.ox + (p.cx - ca * h) * k * f.s, f.oy + (p.cy - sa * h) * k * f.s);
     ctx.lineTo(f.ox + (p.cx + ca * h) * k * f.s, f.oy + (p.cy + sa * h) * k * f.s); ctx.stroke();
   }
@@ -720,7 +720,7 @@ function showMine() {
     const r = h.seq && data.bySeq.get(h.seq);
     const when = new Date(h.t).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     const k = histKey(h), sel = mineMode.hist && mineSel.hist.has(k);
-    return `<button class="card${sel ? ' sel' : ''}" ${mineMode.hist ? `data-seq="${esc(h.seq || 'x')}" data-key="${esc(k)}"` : r ? `data-seq="${esc(r.s)}"` : ''}>${preCard({ num: i + 1, ...(mineMode.hist ? { key: k, checked: sel } : {}) })}<div class="img"><img src="${h.thumb}" alt=""></div>
+    return `<button class="card${sel ? ' sel' : ''}" data-hk="${esc(k)}" ${mineMode.hist ? `data-seq="${esc(h.seq || 'x')}" data-key="${esc(k)}"` : r ? `data-seq="${esc(r.s)}"` : ''}>${preCard({ num: i + 1, ...(mineMode.hist ? { key: k, checked: sel } : {}) })}<div class="img"><img src="${h.thumb}" alt=""></div>
       <div class="body"><div class="name">${r ? esc(r.n) : '찾지 못함'}</div><div class="sub">${when} · 1순위 후보</div></div></button>`;
   }).join('') : '<div class="empty-msg">아직 찍어서 찾은 약이 없습니다.</div>';
   $('#favBar').innerHTML = mineBar('fav'); $('#histBar').innerHTML = mineBar('hist');
@@ -729,6 +729,25 @@ function showMine() {
   $('#sAi').checked = settings.ai; $('#aiBox').classList.toggle('hidden', !settings.ai);
   $('#sKey').value = settings.aiKey; $('#sModel').value = settings.aiModel;
 }
+// 카드를 꾹 누르면(0.5초) 선택 모드로 들어가며 그 약이 선택된다
+let lp = null, lpFired = 0;
+const lpCancel = () => { clearTimeout(lp); lp = null; };
+$('#pgMine').addEventListener('pointerdown', (e) => {
+  const c = e.target.closest('#favList .card, #histList .card'); if (!c || e.button > 0) return;
+  const l = c.closest('#favList') ? 'fav' : 'hist';
+  const key = l === 'fav' ? c.dataset.seq : c.dataset.hk; if (!key) return;
+  lpCancel();
+  lp = setTimeout(() => {
+    lp = null; lpFired = Date.now();
+    mineMode[l] = true; mineSel[l].add(key);
+    if (navigator.vibrate) navigator.vibrate(30);
+    showMine();
+  }, 500);
+});
+for (const ev of ['pointerup', 'pointercancel', 'pointerleave', 'pointermove']) $('#pgMine').addEventListener(ev, (e) => { if (ev !== 'pointermove' || Math.abs(e.movementX) + Math.abs(e.movementY) > 6) lpCancel(); });
+$('#pgMine').addEventListener('contextmenu', (e) => { if (e.target.closest('#favList .card, #histList .card')) e.preventDefault(); });
+// 꾹 누른 직후 따라오는 click은 무시(상세 화면으로 넘어가거나 선택이 바로 풀리지 않게)
+document.addEventListener('click', (e) => { if (Date.now() - lpFired < 600) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
 $('#pgMine').addEventListener('click', (e) => {
   const b = e.target.closest('[data-m]'); if (!b) return;
   const [l, act] = b.dataset.m.split('-');
