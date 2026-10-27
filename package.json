@@ -1,0 +1,10 @@
+{
+  "name": "pillfinder",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "test": "node tests/vision.test.js && node tests/match.test.js",
+    "data": "node scripts/build-data.mjs",
+    "demo": "node tests/make-demo.js"
+  }
+}

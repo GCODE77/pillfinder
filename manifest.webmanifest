@@ -1,0 +1,16 @@
+{
+  "name": "필파인더 - 찍으면 무슨 약인지",
+  "short_name": "필파인더",
+  "description": "카메라로 약을 비추면 모양·색·각인으로 무슨 약인지 찾아 줍니다",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "lang": "ko",
+  "icons": [
+    {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}

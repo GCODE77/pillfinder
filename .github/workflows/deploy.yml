@@ -1,0 +1,73 @@
+# 식약처 데이터를 받아(주 1회 새로) GitHub Pages에 앱과 함께 올린다.
+# 필요: 저장소 Settings → Secrets → Actions 에 SERVICE_KEY(공공데이터포털 인증키)
+#       Settings → Pages → Source: GitHub Actions
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 18 * * 0'   # 매주 월요일 03:00 (한국 시간)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 이번 주 키
+        id: week
+        run: echo "w=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      # 같은 주에 다시 배포하면 받아 둔 데이터를 재사용한다(허가 상세는 20분 이상 걸림)
+      - uses: actions/cache/restore@v4
+        id: cache
+        with:
+          path: data
+          key: mfds-data-${{ steps.week.outputs.w }}
+      - name: 식약처 데이터 받기
+        id: data
+        if: steps.cache.outputs.cache-hit != 'true'
+        continue-on-error: true   # 키가 아직 안 켜졌어도 앱은 배포한다(화면에 "데이터 없음" 안내)
+        env:
+          SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+        run: |
+          if [ -z "$SERVICE_KEY" ]; then echo "::error::SERVICE_KEY Secret이 없습니다(README 참고)"; exit 1; fi
+          node scripts/build-data.mjs
+      # 데이터가 제대로 만들어졌을 때만 캐시에 저장(빈 데이터가 한 주 내내 남지 않게)
+      - uses: actions/cache/save@v4
+        if: steps.cache.outputs.cache-hit != 'true' && steps.data.outcome == 'success'
+        with:
+          path: data
+          key: mfds-data-${{ steps.week.outputs.w }}
+      - name: 올릴 파일 고르기
+        run: |
+          mkdir -p _site
+          cp -r index.html app.js vision.js vision-worker.js match.js ocr.js ai.js sw.js manifest.webmanifest icons vendor _site/
+          if [ -f data/pills.json ]; then cp -r data _site/; else echo '::warning::약 데이터 없이 앱만 배포합니다'; fi
+          touch _site/.nojekyll
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.d.outputs.page_url }}
+    steps:
+      - id: d
+        uses: actions/deploy-pages@v4

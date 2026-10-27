@@ -1,0 +1,589 @@
+// 필파인더 영상 분석 엔진 — 사진 한 장에서 약(과 기준 동전)의 윤곽·모양·색·비율을 뽑는다.
+// Web Worker(vision-worker.js)와 Node 테스트(tests/)에서 같이 쓴다. DOM을 쓰지 않는다.
+//
+// 거리마다 사진 속 크기가 달라지므로 식별에는 거리와 무관한 값만 쓴다:
+//   모양(윤곽을 단위원으로 정규화한 뒤 반지름 곡선의 고조파), 장단축 비율, 색, 각인.
+// 실제 크기(mm)는 같은 평면에 놓인 동전이 보일 때만 동전 지름을 기준으로 계산한다.
+(function (root) {
+  'use strict';
+
+  const SHAPES = ['원형', '타원형', '장방형', '반원형', '삼각형', '사각형', '마름모형', '오각형', '육각형', '팔각형', '기타'];
+
+  // 식약처 COLOR_CLASS 분류와 대표색(sRGB). 실제 약 사진(낱알 이미지)의 평균색을 보고 잡은 값.
+  const COLOR_PROTOS = [
+    ['하양', [236, 236, 232]], ['하양', [222, 224, 226]],
+    ['노랑', [238, 214, 92]], ['노랑', [246, 232, 150]],
+    ['주황', [238, 150, 70]], ['주황', [242, 186, 120]],
+    ['분홍', [238, 168, 186]], ['분홍', [244, 204, 210]],
+    ['빨강', [196, 48, 52]], ['빨강', [220, 90, 80]],
+    ['갈색', [140, 92, 56]], ['갈색', [176, 128, 86]],
+    ['연두', [176, 210, 100]], ['연두', [206, 226, 150]],
+    ['초록', [48, 148, 78]], ['초록', [110, 176, 120]],
+    ['청록', [40, 160, 160]], ['청록', [120, 196, 190]],
+    ['파랑', [60, 110, 200]], ['파랑', [140, 178, 228]],
+    ['남색', [36, 46, 110]],
+    ['자주', [150, 46, 112]], ['자주', [196, 110, 160]],
+    ['보라', [124, 86, 170]], ['보라', [172, 150, 210]],
+    ['회색', [150, 150, 150]], ['회색', [110, 112, 114]],
+    ['검정', [40, 40, 42]],
+  ];
+  const COLORS = [...new Set(COLOR_PROTOS.map((c) => c[0]))];
+
+  // ---------- 색 공간 ----------
+  const LIN = new Float32Array(256);
+  for (let i = 0; i < 256; i++) {
+    const c = i / 255;
+    LIN[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  }
+  const fLab = (t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+  function rgb2lab(r, g, b) {
+    const R = LIN[r], G = LIN[g], B = LIN[b];
+    const x = (0.4124 * R + 0.3576 * G + 0.1805 * B) / 0.95047;
+    const y = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+    const z = (0.0193 * R + 0.1192 * G + 0.9505 * B) / 1.08883;
+    const fx = fLab(x), fy = fLab(y), fz = fLab(z);
+    return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+  }
+  const PROTO_LAB = COLOR_PROTOS.map(([n, c]) => [n, rgb2lab(c[0], c[1], c[2])]);
+
+  function toLab(img) {
+    const n = img.width * img.height, d = img.data;
+    const L = new Float32Array(n), A = new Float32Array(n), B = new Float32Array(n);
+    for (let i = 0, j = 0; i < n; i++, j += 4) {
+      const v = rgb2lab(d[j], d[j + 1], d[j + 2]);
+      L[i] = v[0]; A[i] = v[1]; B[i] = v[2];
+    }
+    return { L, A, B };
+  }
+
+  // 색 분류 확률. 밝기 차는 조명 탓이 커서 가볍게, 색상·채도 차는 무겁게 본다.
+  function colorProbs(lab) {
+    const [L, a, b] = lab;
+    const best = {};
+    // 무채색(하양·회색·검정)은 밝기로만 갈리므로 채도가 낮을수록 밝기 차를 무겁게 본다
+    const wL = 0.3 + 0.7 * Math.exp(-Math.hypot(a, b) / 10);
+    for (const [name, p] of PROTO_LAB) {
+      const d2 = wL * (L - p[0]) ** 2 + (a - p[1]) ** 2 + (b - p[2]) ** 2;
+      if (best[name] === undefined || d2 < best[name]) best[name] = d2;
+    }
+    const sigma2 = 2 * 10 * 10;
+    let sum = 0;
+    const out = {};
+    for (const k of COLORS) { out[k] = Math.exp(-best[k] / sigma2); sum += out[k]; }
+    for (const k of COLORS) out[k] /= sum || 1;
+    return out;
+  }
+  const topKey = (o) => Object.keys(o).reduce((a, b) => (o[a] >= o[b] ? a : b));
+
+  // ---------- 작은 도구 ----------
+  function kmeans(pts, k, iters = 12) {
+    // pts: [[L,a,b],...]
+    if (pts.length <= k) return pts.map((p) => ({ c: p.slice(), n: 1 }));
+    const cs = [pts[0].slice()];
+    while (cs.length < k) {
+      // k-means++ 비슷하게: 가장 먼 점
+      let bi = 0, bd = -1;
+      for (let i = 0; i < pts.length; i += Math.max(1, (pts.length / 400) | 0)) {
+        let m = Infinity;
+        for (const c of cs) m = Math.min(m, d2(pts[i], c));
+        if (m > bd) { bd = m; bi = i; }
+      }
+      cs.push(pts[bi].slice());
+    }
+    let asg = new Int32Array(pts.length);
+    for (let it = 0; it < iters; it++) {
+      const sum = cs.map(() => [0, 0, 0, 0]);
+      for (let i = 0; i < pts.length; i++) {
+        let bj = 0, bd = Infinity;
+        for (let j = 0; j < cs.length; j++) { const d = d2(pts[i], cs[j]); if (d < bd) { bd = d; bj = j; } }
+        asg[i] = bj;
+        const s = sum[bj]; s[0] += pts[i][0]; s[1] += pts[i][1]; s[2] += pts[i][2]; s[3]++;
+      }
+      for (let j = 0; j < cs.length; j++) if (sum[j][3]) cs[j] = [sum[j][0] / sum[j][3], sum[j][1] / sum[j][3], sum[j][2] / sum[j][3]];
+    }
+    const n = cs.map(() => 0);
+    for (let i = 0; i < pts.length; i++) n[asg[i]]++;
+    return cs.map((c, j) => ({ c, n: n[j], asg }));
+  }
+  function d2(p, q) { return (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2; }
+
+  function otsu(vals, maxV) {
+    const bins = 128, h = new Float64Array(bins);
+    for (let i = 0; i < vals.length; i++) h[Math.min(bins - 1, (vals[i] / maxV * bins) | 0)]++;
+    let total = vals.length, sum = 0;
+    for (let i = 0; i < bins; i++) sum += i * h[i];
+    let sB = 0, wB = 0, best = 0, th = 0;
+    for (let i = 0; i < bins; i++) {
+      wB += h[i]; if (!wB) continue;
+      const wF = total - wB; if (!wF) break;
+      sB += i * h[i];
+      const mB = sB / wB, mF = (sum - sB) / wF;
+      const v = wB * wF * (mB - mF) ** 2;
+      if (v > best) { best = v; th = i; }
+    }
+    return (th + 0.5) / bins * maxV;
+  }
+
+  function erode(m, W, H) {
+    const o = new Uint8Array(m.length);
+    for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+      const i = y * W + x; o[i] = m[i] & m[i - 1] & m[i + 1] & m[i - W] & m[i + W];
+    }
+    return o;
+  }
+  function dilate(m, W, H) {
+    const o = new Uint8Array(m.length);
+    for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+      const i = y * W + x; o[i] = m[i] | m[i - 1] | m[i + 1] | m[i - W] | m[i + W];
+    }
+    return o;
+  }
+  const rep = (f, m, W, H, n) => { for (let i = 0; i < n; i++) m = f(m, W, H); return m; };
+
+  // 테두리와 이어지지 않은 구멍(각인 글자, 반사)을 메운다
+  function fillHoles(m, W, H) {
+    const out = new Uint8Array(m.length);
+    const st = [];
+    const push = (i) => { if (!m[i] && !out[i]) { out[i] = 1; st.push(i); } };
+    for (let x = 0; x < W; x++) { push(x); push((H - 1) * W + x); }
+    for (let y = 0; y < H; y++) { push(y * W); push(y * W + W - 1); }
+    while (st.length) {
+      const i = st.pop(), x = i % W, y = (i / W) | 0;
+      if (x > 0) push(i - 1); if (x < W - 1) push(i + 1);
+      if (y > 0) push(i - W); if (y < H - 1) push(i + W);
+    }
+    for (let i = 0; i < m.length; i++) out[i] = out[i] ? 0 : 1;
+    return out;
+  }
+
+  function label(m, W, H) {
+    const lab = new Int32Array(m.length);
+    const comps = [];
+    const st = [];
+    for (let s = 0; s < m.length; s++) {
+      if (!m[s] || lab[s]) continue;
+      const id = comps.length + 1;
+      const c = { id, area: 0, sx: 0, sy: 0, x0: W, y0: H, x1: 0, y1: 0, edge: 0, start: s };
+      lab[s] = id; st.push(s);
+      while (st.length) {
+        const i = st.pop(), x = i % W, y = (i / W) | 0;
+        c.area++; c.sx += x; c.sy += y;
+        if (x < c.x0) c.x0 = x; if (x > c.x1) c.x1 = x; if (y < c.y0) c.y0 = y; if (y > c.y1) c.y1 = y;
+        if (x === 0 || y === 0 || x === W - 1 || y === H - 1) c.edge++;
+        if (x > 0 && m[i - 1] && !lab[i - 1]) { lab[i - 1] = id; st.push(i - 1); }
+        if (x < W - 1 && m[i + 1] && !lab[i + 1]) { lab[i + 1] = id; st.push(i + 1); }
+        if (y > 0 && m[i - W] && !lab[i - W]) { lab[i - W] = id; st.push(i - W); }
+        if (y < H - 1 && m[i + W] && !lab[i + W]) { lab[i + W] = id; st.push(i + W); }
+      }
+      c.cx = c.sx / c.area; c.cy = c.sy / c.area;
+      comps.push(c);
+    }
+    return { lab, comps };
+  }
+
+  // 무어 이웃 추적으로 바깥 윤곽(시계 방향 점 목록)
+  function traceContour(lab, id, W, H, start) {
+    const inside = (x, y) => x >= 0 && y >= 0 && x < W && y < H && lab[y * W + x] === id;
+    const dx = [1, 1, 0, -1, -1, -1, 0, 1], dy = [0, 1, 1, 1, 0, -1, -1, -1];
+    let sx = start % W, sy = (start / W) | 0; // 가장 위·왼쪽 픽셀(라벨링 시작점)
+    const pts = [[sx, sy]];
+    let x = sx, y = sy, dir = 7;
+    for (let guard = 0; guard < W * H * 4; guard++) {
+      let found = false;
+      for (let k = 0; k < 8; k++) {
+        const d = (dir + 6 + k) % 8; // 왼쪽 뒤부터 시계 방향으로 훑기
+        const nx = x + dx[d], ny = y + dy[d];
+        if (inside(nx, ny)) { x = nx; y = ny; dir = d; found = true; break; }
+      }
+      if (!found || (x === sx && y === sy)) break;
+      pts.push([x, y]);
+    }
+    return pts;
+  }
+
+  function simplify(pts, eps) {
+    // 닫힌 곡선용 Douglas–Peucker (가장 먼 두 점에서 나눠 두 번)
+    if (pts.length < 8) return pts.slice();
+    let far = 0, fd = -1;
+    for (let i = 1; i < pts.length; i++) {
+      const d = (pts[i][0] - pts[0][0]) ** 2 + (pts[i][1] - pts[0][1]) ** 2;
+      if (d > fd) { fd = d; far = i; }
+    }
+    const dp = (arr) => {
+      if (arr.length < 3) return arr;
+      const [a, b] = [arr[0], arr[arr.length - 1]];
+      const vx = b[0] - a[0], vy = b[1] - a[1], len = Math.hypot(vx, vy) || 1;
+      let mi = 0, md = -1;
+      for (let i = 1; i < arr.length - 1; i++) {
+        const d = Math.abs(vy * (arr[i][0] - a[0]) - vx * (arr[i][1] - a[1])) / len;
+        if (d > md) { md = d; mi = i; }
+      }
+      if (md <= eps) return [a, b];
+      const l = dp(arr.slice(0, mi + 1)), r = dp(arr.slice(mi));
+      return l.slice(0, -1).concat(r);
+    };
+    const a = dp(pts.slice(0, far + 1));
+    const b = dp(pts.slice(far).concat([pts[0]]));
+    return a.slice(0, -1).concat(b.slice(0, -1));
+  }
+
+  // ---------- 모양 특징 ----------
+  // 1) 2차 모멘트(PCA)로 축 방향  2) 윤곽을 축에 투영해 장·단축 길이
+  // 3) 장·단축을 1로 맞춰 늘린 윤곽의 반지름 곡선 r(θ) → 고조파 크기 h[k]
+  //    타원·캡슐을 늘리면 원·둥근 사각형이 되므로, 남는 고조파가 모서리 개수를 알려 준다.
+  function shapeFeatures(maskPx, contour) {
+    let mx = 0, my = 0;
+    for (const [x, y] of maskPx) { mx += x; my += y; }
+    mx /= maskPx.length; my /= maskPx.length;
+    let sxx = 0, syy = 0, sxy = 0;
+    for (const [x, y] of maskPx) { const u = x - mx, v = y - my; sxx += u * u; syy += v * v; sxy += u * v; }
+    const angle = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+    const ca = Math.cos(angle), sa = Math.sin(angle);
+    let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    const uv = contour.map(([x, y]) => {
+      const u = (x + 0.5 - mx) * ca + (y + 0.5 - my) * sa, v = -(x + 0.5 - mx) * sa + (y + 0.5 - my) * ca;
+      if (u < u0) u0 = u; if (u > u1) u1 = u; if (v < v0) v0 = v; if (v > v1) v1 = v;
+      return [u, v];
+    });
+    const long = u1 - u0 + 1, short = v1 - v0 + 1;
+    // 단축 방향 비대칭(반원형·삼각형은 무게중심이 한쪽으로 치우친다)
+    const asymV = Math.max(-v0, v1) / Math.max(0.5, Math.min(-v0, v1)) - 1;
+    // 정규화 반지름 곡선 (64칸, 칸마다 최대 반지름)
+    const N = 64, r = new Float64Array(N).fill(-1);
+    const hu = long / 2, hv = short / 2;
+    for (const [u, v] of uv) {
+      const x = u / hu, y = v / hv;
+      const k = ((Math.round((Math.atan2(y, x) + Math.PI) / (2 * Math.PI) * N) % N) + N) % N;
+      const rr = Math.hypot(x, y);
+      if (rr > r[k]) r[k] = rr;
+    }
+    for (let k = 0; k < N; k++) if (r[k] < 0) { // 빈 칸은 이웃 평균
+      let a = 1, b = 1;
+      while (r[(k - a + N) % N] < 0 && a < N) a++;
+      while (r[(k + b) % N] < 0 && b < N) b++;
+      r[k] = (r[(k - a + N) % N] + r[(k + b) % N]) / 2;
+    }
+    let mean = 0;
+    for (let k = 0; k < N; k++) mean += r[k];
+    mean /= N;
+    const h = [0], ph = [0];
+    for (let m = 1; m <= 8; m++) {
+      let re = 0, im = 0;
+      for (let k = 0; k < N; k++) { const t = (2 * Math.PI * m * k) / N; re += (r[k] / mean) * Math.cos(t); im += (r[k] / mean) * Math.sin(t); }
+      h.push((2 * Math.hypot(re, im)) / N);
+      ph.push(Math.atan2(im, re));
+    }
+    // 4차 고조파의 위상: 꼭짓점이 축 위(0°)면 마름모, 대각선(45°)이면 사각·장방
+    // r(θ)의 칸 0은 θ=-π. 꼭짓점 각 φ에서 cos(4(θ-φ)) 최대 → 위상 = 4(φ+π) mod 2π
+    const p4 = ph[4];
+    const diamond = Math.cos(p4) > 0 ? Math.cos(p4) : 0; // φ=0 → p4=0 → cos 1
+    const corner45 = Math.cos(p4) < 0 ? -Math.cos(p4) : 0;
+    return { cx: mx, cy: my, angle, long, short, aspect: long / Math.max(1, short), h, diamond, corner45, asymV };
+  }
+
+  function shapeProbs(f, areaPx) {
+    // 해상도가 낮으면 픽셀 계단 때문에 고조파 바닥값이 올라간다
+    const noise = Math.min(0.03, 0.6 / Math.sqrt(Math.max(areaPx, 1)));
+    const z = (k, thr) => Math.max(0, (f.h[k] - noise) / thr);
+    const e = Math.min(1, Math.max(0, (f.aspect - 1.07) / 0.13)); // 길쭉한 정도 0~1
+    const z1 = z(1, 0.06), z3 = z(3, 0.035), z4 = z(4, 0.03), z5 = z(5, 0.025), z6 = z(6, 0.02);
+    let z8 = z(8, 0.014);
+    z8 = Math.max(0, z8 - 0.7 * z4); // 사각형의 2배음은 팔각형이 아님
+    const z6f = Math.max(0, z6 - 0.6 * z3);
+    const clamp = (t) => Math.min(1, Math.max(0, t));
+    // 반원형: 길쭉하고 단축 방향으로 치우침(0.36 근처). 삼각형은 치우침이 더 크고(≈1) 길쭉하지 않다.
+    const semi = e * clamp((f.asymV - 0.12) / 0.14) * (1 - clamp((f.asymV - 0.75) / 0.3));
+    const corner = Math.min(1, Math.max(z3 * (1 - semi), z4 * (1 - semi), z5, z6f, z8, z1, semi));
+    const smooth = 1 - corner;
+    const raw = {
+      원형: (1 - e) * smooth * 1.2,
+      타원형: e * smooth * (1 - Math.min(1, z4)) * 1.1,
+      장방형: e * (1 - semi) * (Math.min(1, z4) * (0.4 + f.corner45) + 0.25 * smooth),
+      반원형: Math.max(Math.min(1, z1), semi) * 1.1,
+      삼각형: Math.min(1, z3) * (1 - 0.8 * semi),
+      사각형: (1 - e * 0.6) * Math.min(1, z4) * (0.3 + f.corner45),
+      마름모형: Math.min(1, z4) * f.diamond,
+      오각형: Math.min(1, z5) * (1 - e * 0.5),
+      육각형: Math.min(1, z6f) * (1 - e * 0.3),
+      팔각형: Math.min(1, z8) * (1 - e * 0.5),
+      기타: 0.06,
+    };
+    let s = 0;
+    for (const k of SHAPES) s += raw[k] * raw[k];
+    const out = {};
+    for (const k of SHAPES) out[k] = (raw[k] * raw[k]) / (s || 1);
+    return out;
+  }
+
+  // ---------- 메인 ----------
+  // img: {width,height,data:RGBA}, opts: {seed:{x,y} (0~1), crop:true(각인 판독용 잘라내기), coin:true}
+  function analyze(img, opts = {}) {
+    const W = img.width, H = img.height, n = W * H;
+    const { L, A, B } = toLab(img);
+
+    // 1) 바닥색: 사진 가장자리 띠에서 군집 3개
+    const band = Math.max(2, Math.round(Math.min(W, H) * 0.04));
+    const samples = [];
+    const stepB = Math.max(1, Math.round(Math.sqrt((2 * band * (W + H)) / 1500)));
+    for (let y = 0; y < H; y += stepB) for (let x = 0; x < W; x += stepB) {
+      if (x >= band && x < W - band && y >= band && y < H - band) continue;
+      const i = y * W + x; samples.push([L[i], A[i], B[i]]);
+    }
+    const bgCl = kmeans(samples, 3).filter((c) => c.n >= samples.length * 0.08);
+    const bgMain = bgCl.reduce((a, b) => (a.n >= b.n ? a : b));
+
+    // 2) 바닥과의 색차 → 문턱(Otsu, 너무 낮거나 높지 않게)
+    const dist = new Float32Array(n);
+    let maxD = 1;
+    for (let i = 0; i < n; i++) {
+      let m = Infinity;
+      for (const c of bgCl) {
+        const d = 0.6 * (L[i] - c.c[0]) ** 2 + (A[i] - c.c[1]) ** 2 + (B[i] - c.c[2]) ** 2;
+        if (d < m) m = d;
+      }
+      dist[i] = Math.sqrt(m);
+      if (dist[i] > maxD) maxD = dist[i];
+    }
+    const th = Math.min(40, Math.max(9, otsu(dist, Math.min(maxD, 120))));
+    let mask = new Uint8Array(n);
+    for (let i = 0; i < n; i++) mask[i] = dist[i] > th ? 1 : 0;
+    const k = Math.max(1, Math.round(Math.min(W, H) / 320));
+    mask = rep(dilate, rep(erode, mask, W, H, k), W, H, k); // 잡티 제거
+    mask = rep(erode, rep(dilate, mask, W, H, k * 2), W, H, k * 2); // 틈 메우기
+    mask = fillHoles(mask, W, H);
+
+    let { lab, comps } = label(mask, W, H);
+    const minArea = n * 0.0015;
+    let cands = comps.filter((c) => c.area >= minArea && c.area < n * 0.6);
+
+    // 3) 색차로 못 찾으면(흰 약 + 흰 종이 등) 밝기 경계로 다시
+    let usedEdge = false;
+    if (!cands.length) {
+      const g = new Float32Array(n);
+      const vals = [];
+      for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+        const i = y * W + x;
+        const gx = L[i + 1] - L[i - 1], gy = L[i + W] - L[i - W];
+        g[i] = Math.hypot(gx, gy);
+        if ((i & 7) === 0) vals.push(g[i]);
+      }
+      vals.sort((a, b) => a - b);
+      const gt = Math.max(4, vals[(vals.length * 0.9) | 0] || 4);
+      let em = new Uint8Array(n);
+      for (let i = 0; i < n; i++) em[i] = g[i] > gt ? 1 : 0;
+      em = rep(dilate, em, W, H, k * 2);
+      em = fillHoles(em, W, H);
+      em = rep(erode, em, W, H, k * 2);
+      ({ lab, comps } = label(em, W, H));
+      cands = comps.filter((c) => c.area >= minArea && c.area < n * 0.6);
+      usedEdge = true;
+    }
+    if (!cands.length) return { ok: false, reason: 'none', W, H, th };
+
+    // 4) 대상 고르기: 터치한 곳 > 화면 가운데 큰 것. 사진 밖으로 잘린 것은 감점.
+    const diag = Math.hypot(W, H);
+    const scoreOf = (c) => {
+      const dc = Math.hypot(c.cx - W / 2, c.cy - H / 2) / diag;
+      const cut = c.edge > 0 ? 0.25 : 1;
+      return c.area * (1 - dc) * cut;
+    };
+    let order = cands.slice().sort((a, b) => scoreOf(b) - scoreOf(a));
+    if (opts.seed) {
+      const sx = opts.seed.x * W, sy = opts.seed.y * H;
+      const hit = lab[Math.min(H - 1, Math.max(0, Math.round(sy))) * W + Math.min(W - 1, Math.max(0, Math.round(sx)))];
+      const near = (c) => (c.id === hit ? -1 : Math.hypot(c.cx - sx, c.cy - sy));
+      order = cands.slice().sort((a, b) => near(a) - near(b));
+    }
+    order = order.slice(0, 4);
+
+    const objects = order.map((c) => describe(c, lab, W, H, L, A, B, bgMain.c, opts));
+
+    // 5) 기준 동전: 약보다 크고, 동그랗고, 은색/구리색인 것
+    let coin = null, pill = objects[0];
+    if (opts.coin !== false && objects.length >= 2) {
+      const isCoinLike = (o) => o.aspect < 1.08 && o.shape.원형 > 0.45 && o.chroma < 26;
+      const cc = objects.filter(isCoinLike).sort((a, b) => b.area - a.area)[0];
+      if (cc) {
+        const others = objects.filter((o) => o !== cc);
+        const p = others.sort((a, b) => b.area - a.area)[0];
+        if (p && cc.area > p.area * 1.15) { coin = cc; pill = opts.seed ? (objects[0] === cc ? p : objects[0]) : p; }
+      }
+    }
+
+    let crop = null;
+    if (opts.crop && pill) crop = imprintCrop(pill, lab, W, H, L);
+
+    return {
+      ok: true, W, H, th, usedEdge,
+      bg: { lab: bgMain.c, chroma: Math.hypot(bgMain.c[1], bgMain.c[2]) },
+      pill, coin, objects,
+      contrast: pill ? pill.contrast : 0,
+      crop,
+    };
+  }
+
+  function describe(c, lab, W, H, L, A, B, bgLab, opts) {
+    const px = [];
+    for (let y = c.y0; y <= c.y1; y++) for (let x = c.x0; x <= c.x1; x++) if (lab[y * W + x] === c.id) px.push([x, y]);
+    const contour = traceContour(lab, c.id, W, H, c.start);
+    const f = shapeFeatures(px, contour);
+    const shape = shapeProbs(f, c.area);
+    // 색: 가장자리 그림자·반사를 피하려고 중심부(축 70%)만
+    const ca = Math.cos(f.angle), sa = Math.sin(f.angle);
+    const pts = [];
+    const stride = Math.max(1, Math.round(Math.sqrt(px.length / 3000)));
+    for (let i = 0; i < px.length; i += stride) {
+      const [x, y] = px[i];
+      const u = (x - f.cx) * ca + (y - f.cy) * sa, v = -(x - f.cx) * sa + (y - f.cy) * ca;
+      if ((u / (f.long * 0.35)) ** 2 + (v / (f.short * 0.35)) ** 2 > 1) continue;
+      const j = y * W + x;
+      pts.push([L[j], A[j], B[j], u]);
+    }
+    // 흰 종이·회색 바닥이면 그 색 틀어짐만큼 화이트밸런스 보정
+    const bgC = Math.hypot(bgLab[1], bgLab[2]);
+    const wb = bgC < 14 && bgLab[0] > 35 ? [bgLab[1] * 0.85, bgLab[2] * 0.85] : [0, 0];
+    const lp = pts.map((p) => [p[0], p[1] - wb[0], p[2] - wb[1], p[3]]); // [L,a,b,장축 위치]
+    // 반짝이는 반사(아주 밝고 무채색)는 약 전체가 그렇지 않은 한 뺀다
+    const noGlare = lp.filter((p) => !(p[0] > 92 && Math.hypot(p[1], p[2]) < 6));
+    const usePts = noGlare.length > lp.length * 0.5 ? noGlare : lp;
+    const med = (arr, k) => { const s = arr.map((p) => p[k]).sort((a, b) => a - b); return s[(s.length / 2) | 0] ?? 0; };
+    const labMed = [med(usePts, 0), med(usePts, 1), med(usePts, 2)];
+    let colors = [{ lab: labMed, probs: colorProbs(labMed), part: 1 }];
+    // 두 가지 색(캡슐 등): 두 군집이 충분히 다르고 장축 방향으로 갈라져 있을 때
+    if (usePts.length > 40) {
+      const km = kmeans(usePts, 2, 10); // 거리는 앞 3개(L,a,b)만 본다
+      if (km.length === 2) {
+        const [g0, g1] = km;
+        const dE = Math.sqrt(0.6 * (g0.c[0] - g1.c[0]) ** 2 + (g0.c[1] - g1.c[1]) ** 2 + (g0.c[2] - g1.c[2]) ** 2);
+        const frac = Math.min(g0.n, g1.n) / usePts.length;
+        let u0 = 0, u1 = 0;
+        for (let i = 0; i < usePts.length; i++) { if (g0.asg[i] === 0) u0 += usePts[i][3]; else u1 += usePts[i][3]; }
+        u0 /= g0.n || 1; u1 /= g1.n || 1;
+        const split = Math.abs(u0 - u1) / f.long;
+        if (dE > 22 && frac > 0.22 && split > 0.18) {
+          const first = u0 <= u1 ? g0 : g1, second = first === g0 ? g1 : g0;
+          colors = [
+            { lab: first.c, probs: colorProbs(first.c), part: first.n / usePts.length },
+            { lab: second.c, probs: colorProbs(second.c), part: second.n / usePts.length },
+          ];
+        }
+      }
+    }
+    // 바닥 대비(낮으면 안내 문구)
+    const contrast = Math.sqrt(0.6 * (labMed[0] - bgLab[0]) ** 2 + (labMed[1] - bgLab[1]) ** 2 + (labMed[2] - bgLab[2]) ** 2);
+    const outline = simplify(contour, Math.max(0.8, Math.sqrt(c.area) / 60));
+    return {
+      id: c.id, area: c.area, bbox: [c.x0, c.y0, c.x1 - c.x0 + 1, c.y1 - c.y0 + 1], cut: c.edge > 0,
+      cx: f.cx, cy: f.cy, angle: f.angle, long: f.long, short: f.short, aspect: f.aspect,
+      harmonics: f.h.map((v) => +v.toFixed(4)), asymV: +f.asymV.toFixed(3),
+      shape, shapeTop: topKey(shape),
+      colors, colorTop: colors.map((c2) => topKey(c2.probs)),
+      chroma: Math.hypot(labMed[1], labMed[2]), contrast,
+      outline,
+    };
+  }
+
+  // ---------- 각인 판독용 잘라내기 ----------
+  // 장축을 가로로 눕혀 잘라내고, 음각 각인(그림자)이 잘 보이게 국소 대비를 키운다.
+  function imprintCrop(o, lab, W, H, L) {
+    const targetH = 160;
+    const s = targetH / Math.max(8, o.short * 1.08);
+    const cw = Math.max(16, Math.round(o.long * 1.08 * s)), ch = Math.max(16, Math.round(o.short * 1.08 * s));
+    const ca = Math.cos(o.angle), sa = Math.sin(o.angle);
+    const g = new Float32Array(cw * ch), inm = new Uint8Array(cw * ch);
+    for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+      const u = (x - cw / 2) / s, v = (y - ch / 2) / s;
+      const sx = o.cx + u * ca - v * sa, sy = o.cy + u * sa + v * ca;
+      const x0 = Math.floor(sx), y0 = Math.floor(sy);
+      if (x0 < 0 || y0 < 0 || x0 >= W - 1 || y0 >= H - 1) continue;
+      const fx = sx - x0, fy = sy - y0, i = y0 * W + x0;
+      g[y * cw + x] = L[i] * (1 - fx) * (1 - fy) + L[i + 1] * fx * (1 - fy) + L[i + W] * (1 - fx) * fy + L[i + W + 1] * fx * fy;
+      // 약 안쪽(윤곽에서 조금 들어온 곳)만 쓴다 — 가장자리 그림자·반사가 글자로 읽히지 않게
+      const ix = Math.round(sx), iy = Math.round(sy), mrg = Math.max(2, Math.round(o.short * 0.06));
+      const inside = (xx, yy) => xx >= 0 && yy >= 0 && xx < W && yy < H && lab[yy * W + xx] === o.id;
+      inm[y * cw + x] = inside(ix, iy) && inside(ix - mrg, iy) && inside(ix + mrg, iy) && inside(ix, iy - mrg) && inside(ix, iy + mrg) ? 1 : 0;
+    }
+    // 국소 대비: 약 안쪽만으로 흐린 값(정규화 합성곱)을 빼서 조명 기울기 제거
+    const r = Math.max(4, Math.round(ch / 6));
+    const gm = new Float32Array(cw * ch), mm = new Float32Array(cw * ch);
+    for (let i = 0; i < gm.length; i++) { gm[i] = inm[i] ? g[i] : 0; mm[i] = inm[i]; }
+    const bg = boxBlur(gm, cw, ch, r), bm = boxBlur(mm, cw, ch, r);
+    const det = new Float32Array(cw * ch);
+    const vals = [];
+    for (let i = 0; i < det.length; i++) if (inm[i]) { det[i] = g[i] - bg[i] / Math.max(1e-3, bm[i]); vals.push(det[i]); }
+    vals.sort((a, b) => a - b);
+    // 각인(어두운 홈)이 검게, 바탕이 희게: 아래쪽 꼬리를 늘린다
+    const lo = vals[(vals.length * 0.02) | 0] ?? -1, hi = vals[(vals.length * 0.6) | 0] ?? 1;
+    const out = new Uint8ClampedArray(cw * ch);
+    // 약 바깥은 흰색이 아니라 약 바탕 밝기로 채운다(테두리가 글자 모양으로 읽히지 않게)
+    const detBg = Math.max(0, Math.min(255, ((0 - lo) / (hi - lo || 1)) * 255));
+    for (let i = 0; i < det.length; i++) {
+      out[i] = inm[i] ? Math.max(0, Math.min(255, ((det[i] - lo) / (hi - lo || 1)) * 255)) : detBg;
+    }
+    // 원래 밝기(인쇄 각인용)
+    const raw = new Uint8ClampedArray(cw * ch);
+    const gv = [];
+    for (let i = 0; i < g.length; i++) if (inm[i]) gv.push(g[i]);
+    gv.sort((a, b) => a - b);
+    const glo = gv[(gv.length * 0.02) | 0] ?? 0, ghi = gv[(gv.length * 0.98) | 0] ?? 100;
+    const gmed = gv[(gv.length * 0.5) | 0] ?? 50;
+    const rawBg = Math.max(0, Math.min(255, ((gmed - glo) / (ghi - glo || 1)) * 255));
+    for (let i = 0; i < g.length; i++) raw[i] = inm[i] ? Math.max(0, Math.min(255, ((g[i] - glo) / (ghi - glo || 1)) * 255)) : rawBg;
+    // 음각 윤곽(그림자+밝은 테두리)은 글자 안이 바탕과 같아 OCR이 못 읽는다 →
+    // 밝기 기울기가 큰 곳을 글자 획으로 보고, 닫힘 연산으로 획을 채운다.
+    const gr = new Float32Array(cw * ch), gvals = [];
+    for (let y = 1; y < ch - 1; y++) for (let x = 1; x < cw - 1; x++) {
+      const i = y * cw + x;
+      if (!inm[i] || !inm[i - 1] || !inm[i + 1] || !inm[i - cw] || !inm[i + cw]) continue;
+      const gx = g[i - cw + 1] + 2 * g[i + 1] + g[i + cw + 1] - g[i - cw - 1] - 2 * g[i - 1] - g[i + cw - 1];
+      const gy = g[i + cw - 1] + 2 * g[i + cw] + g[i + cw + 1] - g[i - cw - 1] - 2 * g[i - cw] - g[i - cw + 1];
+      gr[i] = Math.hypot(gx, gy); gvals.push(gr[i]);
+    }
+    gvals.sort((a, b) => a - b);
+    const gth = Math.max(6, gvals[(gvals.length * 0.88) | 0] || 6);
+    let st = new Uint8Array(cw * ch);
+    for (let i = 0; i < st.length; i++) st[i] = gr[i] > gth ? 1 : 0;
+    const kk = Math.max(1, Math.round(ch / 70));
+    st = rep(erode, rep(dilate, st, cw, ch, kk * 2), cw, ch, kk * 2);
+    const relief = new Uint8ClampedArray(cw * ch);
+    for (let i = 0; i < st.length; i++) relief[i] = st[i] ? 0 : 255;
+    // 글자 줄의 방향: 획 픽셀 분포의 주축(둥근 약은 글자가 아무 방향으로나 찍힌다)
+    let n0 = 0, mx = 0, my = 0;
+    for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (st[y * cw + x]) { n0++; mx += x; my += y; }
+    let textAngle = 0, textElong = 1;
+    if (n0 > 30) {
+      mx /= n0; my /= n0;
+      let sxx = 0, syy = 0, sxy = 0;
+      for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (st[y * cw + x]) { const u = x - mx, v = y - my; sxx += u * u; syy += v * v; sxy += u * v; }
+      textAngle = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+      const tr = sxx + syy, det2 = Math.sqrt(Math.max(0, (sxx - syy) ** 2 + 4 * sxy * sxy));
+      textElong = Math.sqrt((tr + det2) / Math.max(1e-6, tr - det2));
+    }
+    return { w: cw, h: ch, detail: out, raw, relief, textAngle, textElong };
+  }
+
+  function boxBlur(src, w, h, r) {
+    const tmp = new Float32Array(w * h), out = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      let acc = 0, cnt = 0;
+      for (let x = -r; x < w + r; x++) {
+        if (x + r < w && x + r >= 0) { acc += src[y * w + x + r]; cnt++; }
+        if (x - r - 1 >= 0 && x - r - 1 < w) { acc -= src[y * w + x - r - 1]; cnt--; }
+        if (x >= 0 && x < w) tmp[y * w + x] = acc / cnt;
+      }
+    }
+    for (let x = 0; x < w; x++) {
+      let acc = 0, cnt = 0;
+      for (let y = -r; y < h + r; y++) {
+        if (y + r < h && y + r >= 0) { acc += tmp[(y + r) * w + x]; cnt++; }
+        if (y - r - 1 >= 0 && y - r - 1 < h) { acc -= tmp[(y - r - 1) * w + x]; cnt--; }
+        if (y >= 0 && y < h) out[y * w + x] = acc / cnt;
+      }
+    }
+    return out;
+  }
+
+  const api = { analyze, colorProbs, rgb2lab, SHAPES, COLORS };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.Vision = api;
+})(typeof self !== 'undefined' ? self : this);
