@@ -1,7 +1,7 @@
 // 필파인더 화면 로직
 import { readImprint, warmUpOcr } from './ocr.js';
 
-const APP_VERSION = '1.0';
+const APP_VERSION = '1.0.1';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -138,18 +138,40 @@ const small = document.createElement('canvas');
 
 async function camStart() {
   if (stream) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    $('#camEmpty').classList.remove('hidden');
+    return toast('이 브라우저는 카메라를 지원하지 않습니다. 크롬 또는 삼성 인터넷으로 여세요(카카오톡 등 앱 안 브라우저 X)', 5000);
+  }
+  // 고해상도 후면 → 후면 → 아무 카메라 순으로 시도(기기마다 지원 조건이 달라 첫 요청이 실패할 수 있다)
+  const tries = [
+    { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+    { facingMode: { ideal: 'environment' } },
+    true,
+  ];
+  let err = null;
+  for (const v of tries) {
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: v }); break; }
+    catch (e) { err = e; if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) break; }
+  }
+  if (!stream) {
+    $('#camEmpty').classList.remove('hidden');
+    const why = {
+      NotAllowedError: '카메라 권한이 막혀 있습니다. 주소창 왼쪽 자물쇠(또는 ⋮ → 사이트 설정) → 카메라 → 허용 후 새로고침',
+      SecurityError: '카메라 권한이 막혀 있습니다. 사이트 설정에서 카메라를 허용하세요',
+      NotFoundError: '카메라를 찾지 못했습니다(카메라 없는 PC는 사진 불러오기를 쓰세요)',
+      NotReadableError: '다른 앱이 카메라를 쓰고 있습니다. 카메라 앱을 닫고 다시 시도하세요',
+      AbortError: '카메라가 응답하지 않습니다. 다른 앱을 닫고 다시 시도하세요',
+    }[err && err.name] || `카메라를 켤 수 없습니다 (${err && err.name || '알 수 없음'}: ${err && err.message || ''})`;
+    return toast(why, 7000);
+  }
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
     video.srcObject = stream;
     await video.play();
-    $('#camEmpty').classList.add('hidden');
-    showStill(null);
-    live = true; liveLoop();
-    warmUpOcr();
-  } catch (e) {
-    $('#camEmpty').classList.remove('hidden');
-    toast(e && e.name === 'NotAllowedError' ? '카메라 권한이 거부되었습니다. 사진 불러오기를 쓰세요' : '카메라를 켤 수 없습니다. 사진 불러오기를 쓰세요', 3500);
-  }
+  } catch (e) { /* 일부 기기는 play()가 늦게 끝남 — 영상은 그대로 나온다 */ }
+  $('#camEmpty').classList.add('hidden');
+  showStill(null);
+  live = true; liveLoop();
+  warmUpOcr();
 }
 function camStop() { live = false; if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; } }
 function camEnter() { if (!capturing && !$('#still').src) { if (store.get('pf.camOk', false)) camStart(); } }
