@@ -1,0 +1,10 @@
+name: probe
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          K: ${{ secrets.SERVICE_KEY }}
+        run: |
+          curl -s "https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService07/getDrugPrdtPrmsnDtlInq06?serviceKey=${K}&pageNo=1&numOfRows=1&type=json" | head -c 600 | sed "s/${K}/***/g"
