@@ -3,7 +3,7 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "test": "node tests/vision.test.js && node tests/match.test.js",
+    "test": "node tests/vision.test.js && node tests/match.test.js && node tests/real.test.js",
     "data": "node scripts/build-data.mjs",
     "demo": "node tests/make-demo.js"
   }

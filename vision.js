@@ -288,11 +288,12 @@
 
   function shapeProbs(f, areaPx) {
     // 해상도가 낮으면 픽셀 계단 때문에 고조파 바닥값이 올라간다
-    const noise = Math.min(0.03, 0.6 / Math.sqrt(Math.max(areaPx, 1)));
+    // 실제 사진은 테두리가 거칠어 고조파 바닥값이 0.01~0.02까지 올라온다
+    const noise = Math.max(0.008, Math.min(0.03, 0.6 / Math.sqrt(Math.max(areaPx, 1))));
     const z = (k, thr) => Math.max(0, (f.h[k] - noise) / thr);
     const e = Math.min(1, Math.max(0, (f.aspect - 1.07) / 0.13)); // 길쭉한 정도 0~1
-    const z1 = z(1, 0.06), z3 = z(3, 0.035), z4 = z(4, 0.03), z5 = z(5, 0.025), z6 = z(6, 0.02);
-    let z8 = z(8, 0.014);
+    const z1 = z(1, 0.06), z3 = z(3, 0.07), z4 = z(4, 0.035), z5 = z(5, 0.035), z6 = z(6, 0.028);
+    let z8 = z(8, 0.018);
     z8 = Math.max(0, z8 - 0.7 * z4); // 사각형의 2배음은 팔각형이 아님
     const z6f = Math.max(0, z6 - 0.6 * z3);
     const clamp = (t) => Math.min(1, Math.max(0, t));
@@ -322,7 +323,9 @@
 
   // ---------- 메인 ----------
   // img: {width,height,data:RGBA}, opts: {seed:{x,y} (0~1), crop:true(각인 판독용 잘라내기), coin:true}
+  let TH_CAP = 40;
   function analyze(img, opts = {}) {
+    if (opts.thCap) TH_CAP = opts.thCap;
     const W = img.width, H = img.height, n = W * H;
     const { L, A, B } = toLab(img);
 
@@ -334,7 +337,8 @@
       if (x >= band && x < W - band && y >= band && y < H - band) continue;
       const i = y * W + x; samples.push([L[i], A[i], B[i]]);
     }
-    const bgCl = kmeans(samples, 3).filter((c) => c.n >= samples.length * 0.08);
+    // 가장자리에 다른 약이 살짝 걸려 있어도 그 색을 바닥으로 배우지 않게, 주된 색(20% 이상)만 바닥으로
+    const bgCl = kmeans(samples, 3).filter((c) => c.n >= samples.length * 0.2);
     const bgMain = bgCl.reduce((a, b) => (a.n >= b.n ? a : b));
 
     // 2) 바닥과의 색차 → 문턱(Otsu, 너무 낮거나 높지 않게)
@@ -343,13 +347,19 @@
     for (let i = 0; i < n; i++) {
       let m = Infinity;
       for (const c of bgCl) {
-        const d = 0.6 * (L[i] - c.c[0]) ** 2 + (A[i] - c.c[1]) ** 2 + (B[i] - c.c[2]) ** 2;
+        // 그림자: 바닥과 색은 같고 조금(30 이내) 어두운 곳 → 밝기 차를 거의 안 본다. 검은 약처럼 아주 어두우면 그대로
+        const dL = L[i] - c.c[0];
+        const wL = dL < 0 && dL > -30 ? 0.12 : 0.6;
+        const d = wL * dL * dL + (A[i] - c.c[1]) ** 2 + (B[i] - c.c[2]) ** 2;
         if (d < m) m = d;
       }
       dist[i] = Math.sqrt(m);
       if (dist[i] > maxD) maxD = dist[i];
     }
-    const th = Math.min(40, Math.max(9, otsu(dist, Math.min(maxD, 120))));
+    // 진한 물건(포장지 등)이 문턱을 끌어올려 옅은 약이 묻히지 않게, 큰 차이는 40으로 눌러 Otsu
+    const capped = new Float32Array(n);
+    for (let i = 0; i < n; i++) capped[i] = Math.min(dist[i], 40);
+    const th = Math.min(TH_CAP, Math.max(9, otsu(capped, 40)));
     let mask = new Uint8Array(n);
     for (let i = 0; i < n; i++) mask[i] = dist[i] > th ? 1 : 0;
     const k = Math.max(1, Math.round(Math.min(W, H) / 320));
@@ -359,7 +369,7 @@
 
     let { lab, comps } = label(mask, W, H);
     const minArea = n * 0.0015;
-    let cands = comps.filter((c) => c.area >= minArea && c.area < n * 0.6);
+    let cands = comps.filter((c) => c.area >= minArea && c.area < n * 0.85);
 
     // 3) 색차로 못 찾으면(흰 약 + 흰 종이 등) 밝기 경계로 다시
     let usedEdge = false;
@@ -380,7 +390,7 @@
       em = fillHoles(em, W, H);
       em = rep(erode, em, W, H, k * 2);
       ({ lab, comps } = label(em, W, H));
-      cands = comps.filter((c) => c.area >= minArea && c.area < n * 0.6);
+      cands = comps.filter((c) => c.area >= minArea && c.area < n * 0.85);
       usedEdge = true;
     }
     if (!cands.length) return { ok: false, reason: 'none', W, H, th };
@@ -391,11 +401,14 @@
       const dc = Math.hypot(c.cx - W / 2, c.cy - H / 2) / diag;
       // 가장자리에 걸친 것(포장지·손가락·물건)은 크게 감점, 많이 걸칠수록 더
       const edgeFrac = c.edge / Math.max(1, (c.x1 - c.x0 + c.y1 - c.y0 + 2) * 2);
-      const cut = c.edge > 0 ? 0.15 * Math.max(0.1, 1 - edgeFrac * 4) : 1;
+      const mg = Math.max(2, Math.min(W, H) * 0.015);
+      const near = c.x0 <= mg || c.y0 <= mg || c.x1 >= W - 1 - mg || c.y1 >= H - 1 - mg;
+      const cut = c.edge > 0 || near ? 0.15 * Math.max(0.1, 1 - edgeFrac * 4) : 1;
       const bw = c.x1 - c.x0 + 1, bh = c.y1 - c.y0 + 1;
       const elong = Math.max(bw, bh) / Math.max(1, Math.min(bw, bh));
       const shapeOk = elong > 3.5 ? 0.15 : 1;                 // 알약은 장단축비가 대개 3 이하
-      const sizeOk = c.area > n * 0.25 ? 0.2 : 1;              // 화면 대부분을 덮는 건 바닥일 가능성
+      // 가까이 찍으면 약이 화면의 절반을 넘기도 한다. 다만 가장자리에 걸치면서 큰 것은 바닥·손일 가능성
+      const sizeOk = c.area > n * 0.7 || (c.area > n * 0.3 && c.edge > 0) ? 0.2 : 1;
       const fill = c.area / (bw * bh);                         // 속이 빈 테두리·선 모양 제외
       return c.area * (1 - dc) * cut * shapeOk * sizeOk * (fill < 0.45 ? 0.3 : 1);
     };
@@ -413,12 +426,13 @@
     // 5) 기준 동전: 약보다 크고, 동그랗고, 은색/구리색인 것
     let coin = null, pill = objects[0];
     if (opts.coin !== false && objects.length >= 2) {
-      const isCoinLike = (o) => o.aspect < 1.08 && o.shape.원형 > 0.45 && o.chroma < 26;
+      // 동전: 둥글고, 금속색(은색은 흰 약보다 어둡다, 구리색 10원은 갈색 계열)
+      const isCoinLike = (o) => o.aspect < 1.08 && o.shape.원형 > 0.45 && o.chroma < 26 && o.colors[0].lab[0] < 80;
       const cc = objects.filter(isCoinLike).sort((a, b) => b.area - a.area)[0];
       if (cc) {
         const others = objects.filter((o) => o !== cc);
         const p = others.sort((a, b) => b.area - a.area)[0];
-        if (p && cc.area > p.area * 1.15) { coin = cc; pill = opts.seed ? (objects[0] === cc ? p : objects[0]) : p; }
+        if (p && cc.area > p.area * 1.15 && p.area > cc.area * 0.08 && !p.cut) { coin = cc; pill = opts.seed ? (objects[0] === cc ? p : objects[0]) : p; }
       }
     }
 
