@@ -1,7 +1,7 @@
 // 필파인더 화면 로직
 import { readImprint, warmUpOcr } from './ocr.js';
 
-const APP_VERSION = '1.0.2';
+const APP_VERSION = '1.0.3';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -164,6 +164,8 @@ async function camStart() {
     }[err && err.name] || `카메라를 켤 수 없습니다 (${err && err.name || '알 수 없음'}: ${err && err.message || ''})`;
     return toast(why, 7000);
   }
+  // 켜는 동안 사진을 불러왔거나 결과가 떠 있으면 카메라는 다시 끈다
+  if (capturing || showingStill()) { camStop(); return; }
   try {
     video.srcObject = stream;
     await video.play();
@@ -174,7 +176,10 @@ async function camStart() {
   warmUpOcr();
 }
 function camStop() { live = false; if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; } }
-function camEnter() { if (!capturing && !$('#still').src) { if (store.get('pf.camOk', false)) camStart(); } }
+const showingStill = () => !!$('#still').getAttribute('src');
+function camEnter() { if (!capturing && !showingStill() && !pendingPick()) { if (store.get('pf.camOk', false)) camStart(); } }
+let pickAt = 0;
+const pendingPick = () => pickAt > 0 && performance.now() - pickAt < 60000;
 function camLeave() { camStop(); }
 $('#btnCamStart').addEventListener('click', () => { store.set('pf.camOk', true); camStart(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) camStop(); else if (location.hash.startsWith('#/cam') || !location.hash) camEnter(); });
@@ -276,8 +281,10 @@ $('#stage').addEventListener('click', (e) => {
 $('#btnAuto').classList.toggle('on', settings.auto);
 $('#btnAuto').addEventListener('click', () => { settings.auto = !settings.auto; saveSettings(); $('#btnAuto').classList.toggle('on', settings.auto); toast(settings.auto ? '윤곽이 멈추면 자동으로 찍습니다' : '자동 촬영 끔'); });
 $('#btnShoot').addEventListener('click', () => (stream ? capture() : $('#file').click()));
-$('#btnLoad').addEventListener('click', () => $('#file').click());
-$('#file').addEventListener('change', async (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) fromBlob(f); });
+// 갤러리로 나갔다 오면 화면이 잠시 숨겨진다 → 카메라를 미리 끄고, 돌아와서 결과를 덮어쓰지 않게
+$('#btnLoad').addEventListener('click', () => { pickAt = performance.now(); camStop(); $('#file').click(); });
+$('#file').addEventListener('cancel', () => { pickAt = 0; camEnter(); });
+$('#file').addEventListener('change', async (e) => { const f = e.target.files[0]; e.target.value = ''; pickAt = 0; if (f) fromBlob(f); else camEnter(); });
 window.addEventListener('paste', (e) => {
   const it = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith('image/'));
   if (it) { location.hash = '#/cam'; fromBlob(it.getAsFile()); }
@@ -287,9 +294,20 @@ $('#stage').addEventListener('dragover', (e) => e.preventDefault());
 $('#stage').addEventListener('drop', (e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f && f.type.startsWith('image/')) fromBlob(f); });
 
 async function fromBlob(blob) {
-  const bmp = await createImageBitmap(blob).catch(() => null);
-  if (!bmp) return toast('사진을 읽을 수 없습니다');
-  const c = toCanvas(bmp, bmp.width, bmp.height);
+  camStop();
+  busy(true, '사진 읽는 중');
+  // 1) createImageBitmap(사진 회전 정보 반영) 2) 안 되면 <img>로 (일부 폰 사진 형식 대응)
+  let src = await createImageBitmap(blob, { imageOrientation: 'from-image' }).catch(() => null);
+  let w = src && src.width, h = src && src.height;
+  if (!src) {
+    const url = URL.createObjectURL(blob);
+    const im = new Image();
+    im.src = url;
+    try { await im.decode(); src = im; w = im.naturalWidth; h = im.naturalHeight; } catch { src = null; }
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+  if (!src || !w) { busy(false); return toast('이 사진 형식은 읽을 수 없습니다. 카메라 앱에서 JPG로 저장된 사진을 고르세요', 4500); }
+  const c = toCanvas(src, w, h);
   seed = null;
   identify(c);
 }
