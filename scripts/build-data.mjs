@@ -47,6 +47,9 @@ async function getPage(endpoint, pageNo, timeout = 30000) {
         throw new Error(`API 오류: ${msg}`);
       }
       const j = JSON.parse(text);
+      // 인증 오류는 JSON으로도 온다: {OpenAPI_ServiceResponse:{cmmMsgHeader:{errMsg,returnAuthMsg}}}
+      const eh = j.OpenAPI_ServiceResponse?.cmmMsgHeader;
+      if (eh) throw new Error(`API 오류: ${eh.returnAuthMsg || eh.errMsg}`);
       const body = j.body ?? j.response?.body;
       const code = j.header?.resultCode ?? j.response?.header?.resultCode;
       if (code && code !== '00') throw new Error(`resultCode ${code} ${j.header?.resultMsg ?? ''}`);
@@ -150,6 +153,7 @@ async function main() {
     seen.add(p.s);
     pills.push(p);
   }
+  if (pills.length < 1000) throw new Error(`낱알식별이 ${pills.length}건뿐입니다 — 응답 형식이나 인증키를 확인하세요`);
   pills.sort((a, b) => a.n.localeCompare(b.n, 'ko'));
 
   // 2) 상세 — e약은요(일반약, 쉬운 말) 우선, 없으면 허가사항(전문약 포함)
