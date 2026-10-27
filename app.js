@@ -1,7 +1,7 @@
 // 필파인더 화면 로직
 import { readImprint, warmUpOcr } from './ocr.js';
 
-const APP_VERSION = '1.0.4';
+const APP_VERSION = '1.1';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -15,6 +15,12 @@ const settings = Object.assign({ auto: true, coin: '24', ai: false, aiKey: '', a
 const saveSettings = () => store.set('pf.settings', settings);
 let favs = store.get('pf.favs', []);
 let hist = store.get('pf.hist', []);
+// 확인된 약: 사용자가 "이 약이 맞아요"를 누른 사진의 각인 지문(32×32, 8비트) — 다음에 같은 약을 찍으면 맨 위로
+let learned = store.get('pf.learned', []);
+const packDesc = (d) => { const b = new Int8Array(d.length); for (let i = 0; i < d.length; i++) b[i] = Math.max(-127, Math.min(127, Math.round(d[i] * 32))); let s = ''; for (const v of new Uint8Array(b.buffer)) s += String.fromCharCode(v); return btoa(s); };
+const unpackDesc = (t) => { const s = atob(t), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); const b = new Int8Array(u.buffer); const d = new Float32Array(b.length); for (let i = 0; i < b.length; i++) d[i] = b[i] / 32; return d; };
+let learnedCache = null;
+const learnedDescs = () => (learnedCache ||= learned.map((e) => ({ s: e.s, d: unpackDesc(e.d) })));
 
 function toast(msg, ms = 2400) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('on');
@@ -83,7 +89,7 @@ const printTxt = (r) => [r.pf, r.pb].filter(Boolean).join(' / ');
 
 function card(r, extra = {}) {
   const feat = [r.sh, M.dbColors(r).join('·'), printTxt(r) && `<b>${esc(printTxt(r))}</b>`, sizeTxt(r)].filter(Boolean);
-  const why = extra.parts ? Object.entries(extra.parts).map(([k, v]) => `<span class="${v > 0.75 ? 'hi' : ''}">${{ shape: '모양', color: '색', aspect: '비율', size: '크기', imprint: '각인' }[k]} ${Math.round(v * 100)}</span>`).join('') : '';
+  const why = extra.parts ? Object.entries(extra.parts).map(([k, v]) => `<span class="${v > 0.75 ? 'hi' : ''}">${{ shape: '모양', color: '색', aspect: '비율', size: '크기', imprint: '각인', line: '분할선', blank: '빈면', learned: '내가 확인한 약' }[k]} ${Math.round(v * 100)}</span>`).join('') : '';
   return `<button class="card" data-seq="${esc(r.s)}">
     <div class="img">${imgOf(r)}</div>
     <div class="body"><div class="name">${otcBadge(r)}${esc(r.n)}</div><div class="sub">${esc(r.e)}${r.cl ? ' · ' + esc(r.cl) : ''}</div>
@@ -270,7 +276,16 @@ async function liveLoop() {
   requestAnimationFrame(liveLoop);
 }
 
+let lastCanvas = null;
 $('#stage').addEventListener('click', (e) => {
+  // 결과(정지 사진)에서 다른 약을 터치하면 그 약으로 다시 찾기
+  if (!live && showingStill() && lastCanvas && !capturing) {
+    const r = ovl.getBoundingClientRect();
+    const f = fit(ovl, lastCanvas.width, lastCanvas.height);
+    const x = (e.clientX - r.left - f.ox) / (lastCanvas.width * f.s), y = (e.clientY - r.top - f.oy) / (lastCanvas.height * f.s);
+    if (x >= 0 && x <= 1 && y >= 0 && y <= 1) { seed = { x, y }; pendingBack = sides.length > 1 ? false : pendingBack; identify(lastCanvas); }
+    return;
+  }
   if (!live) return;
   const r = ovl.getBoundingClientRect();
   const f = fit(ovl, video.videoWidth, video.videoHeight);
@@ -347,6 +362,7 @@ function pillThumb(canvas, o, size = 360) {
 }
 
 async function identify(canvas) {
+  lastCanvas = canvas;
   capturing = true;
   live = false;
   showStill(canvas);
@@ -356,13 +372,14 @@ async function identify(canvas) {
   try {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const res = await vision(img, { seed, crop: true, coin: true });
+    const res = await vision(img, { seed, crop: true, coin: true, desc: 'pill', rots: 36 });
     if (!res.ok || !res.pill) {
       busy(false);
       toast(res.reason === 'timeout' ? '분석이 너무 오래 걸립니다. 다시 찍어 주세요' : '약을 찾지 못했어요. 단색 바닥에 한 알만 두고 다시 찍어 주세요', 3800);
       if (!pendingBack) resetCam();
       return;
     }
+    if (res.objects.length > 1) toast('약이 여러 개입니다. 다른 약을 찾으려면 사진에서 그 약을 터치하세요', 3500);
     // 분석한 윤곽을 사진 위에 그려 보여 줌
     drawOverlay(res, canvas.width, canvas.height, canvas.width, canvas.height);
     const thumb = pillThumb(canvas, res.pill);
@@ -430,7 +447,22 @@ function autoObs() {
       if (i === 0 && s.ai.colors && s.ai.colors.length) colors = s.ai.colors.slice(0, 2).map((c, j) => ({ probs: mix(colors[j] ? colors[j].probs : {}, c) }));
     }
   });
-  return { shape, colors, aspect, mm, imprints };
+  // 면 특징 → 확률: 분할선 점수 7 근처, 각인 변화량 1.1 근처가 경계(실제 사진·식약처 사진 600면으로 맞춤)
+  const sig = (x) => 1 / (1 + Math.exp(-x));
+  const faces = ps.map((p) => ({
+    line: p.lineScore !== undefined ? sig((p.lineScore - 7) / 1.2) : undefined,
+    blank: p.markEnergy !== undefined ? sig((1.1 - p.markEnergy) / 0.2) : undefined,
+  }));
+  // 확인된 약과 지문 비교(내 폰 사진끼리라 잘 맞는다): 0.35 이상만
+  let learnedSim = null;
+  if (learned.length) {
+    learnedSim = new Map();
+    for (const sd of sides) {
+      const q = sd.res.pill.desc; if (!q) continue;
+      for (const e of learnedDescs()) { const v = V.descSim(q, e.d); if (v >= 0.35 && v > (learnedSim.get(e.s) || 0)) learnedSim.set(e.s, v); }
+    }
+  }
+  return { shape, colors, aspect, mm, imprints, faces, learnedSim };
 }
 const mix = (probs, c) => { const o = {}; for (const k of V.COLORS) o[k] = 0.4 * (probs[k] || 0); o[c] = (o[c] || 0) + 0.6; return o; };
 
@@ -595,6 +627,8 @@ async function showItem(seq) {
         <div class="detail-name">${otcBadge(r)}${esc(r.n)}</div>
         <div class="row" style="flex-wrap:nowrap"><button class="fav ${isFav ? 'on' : ''}" id="favBtn">${isFav ? '내 약에 저장됨' : '내 약에 저장'}</button>
           <button class="fav" id="shareBtn">링크 복사</button></div>
+        ${sides.length && sides[0].res.pill.desc ? `<button class="primary" id="confirmBtn" style="width:100%;margin-top:8px">${learned.some((e) => e.s === seq) ? '찍은 약을 이 약으로 한 번 더 기억하기' : '찍은 약이 이 약 맞아요 (기억하기)'}</button>
+        <div class="hint" style="margin-top:4px">기억해 두면 다음에 같은 약을 찍을 때 맨 위에 나옵니다.</div>` : ''}
         <table class="spec">${spec.map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join('')}<tr id="ingrRow" class="hidden"><th>성분</th><td></td></tr></table>
       </div>
     </div>
@@ -609,6 +643,21 @@ async function showItem(seq) {
     if (i >= 0) favs.splice(i, 1); else favs.unshift(seq);
     store.set('pf.favs', favs);
     e.target.classList.toggle('on', i < 0); e.target.textContent = i < 0 ? '내 약에 저장됨' : '내 약에 저장';
+  });
+  const cb = $('#confirmBtn');
+  if (cb) cb.addEventListener('click', () => {
+    // 각 면 사진의 기준 방향 지문 하나씩 저장(약 하나당 최대 4장, 전체 300장)
+    for (const sd of sides) {
+      const d = sd.res.pill.desc; if (!d) continue;
+      learned.unshift({ s: seq, d: packDesc(Array.isArray(d) ? d[0] : d), t: Date.now() });
+    }
+    const per = {};
+    learned = learned.filter((e) => (per[e.s] = (per[e.s] || 0) + 1) <= 4).slice(0, 300);
+    learnedCache = null;
+    store.set('pf.learned', learned);
+    if (!favs.includes(seq)) { favs.unshift(seq); store.set('pf.favs', favs); }
+    cb.textContent = '기억했습니다'; cb.disabled = true;
+    toast('기억했습니다. 내 약에도 저장했어요');
   });
   $('#shareBtn').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(location.href); toast('링크를 복사했습니다'); } catch { toast(location.href, 4000); }

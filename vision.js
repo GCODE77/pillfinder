@@ -438,6 +438,16 @@
 
     let crop = null;
     if (opts.crop && pill) crop = imprintCrop(pill, lab, W, H, L);
+    // 분할선·각인 유무(면 특징): 고른 약만, 흐린 밝기에서
+    if (pill && opts.face !== false) Object.assign(pill, faceFeatures(pill, L, W, H));
+    if (opts.faceAll) for (const o of objects) Object.assign(o, faceFeatures(o, L, W, H));
+    // 각인 지문: opts.desc=true면 모든 물체, 'pill'이면 고른 약만. opts.rots>1이면 회전별 지문 여러 장
+    if (opts.desc) for (const o of opts.desc === 'pill' ? [pill] : objects) if (o) {
+      // 표면 질감을 지우려고 약 크기에 비례해 흐린 밝기에서 잰다
+      const rb = Math.max(1, Math.round(o.short / 45));
+      const Lb = rb > 0 ? boxBlur(L, W, H, rb) : L;
+      o.desc = descriptor(o, Lb, W, H, opts.rots || 1);
+    }
 
     return {
       ok: true, W, H, th, usedEdge,
@@ -626,6 +636,129 @@
     return { w: cw, h: ch, detail: out, raw, relief, textAngle, textElong };
   }
 
+  // ---------- 면 특징: 분할선, 각인 유무 ----------
+  // 분할선 = 약 중심을 지나 지름 대부분을 가로지르는 곧은 홈. 각도마다 그 방향 선분 위 평균 밝기 단면을 만들고,
+  // 가운데(±5%)에서 양옆(±12%)과 확 다른 좁은 골·마루가 있으면 분할선. 십자는 수직인 두 방향이 모두 강할 때.
+  function faceFeatures(o, L, W, H) {
+    const R = o.short / 2;
+    const rb = Math.max(1, Math.round(R / 40));
+    const x0 = Math.max(0, Math.floor(o.cx - o.long / 2 - 2)), y0 = Math.max(0, Math.floor(o.cy - o.long / 2 - 2));
+    const x1 = Math.min(W - 1, Math.ceil(o.cx + o.long / 2 + 2)), y1 = Math.min(H - 1, Math.ceil(o.cy + o.long / 2 + 2));
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    const sub = new Float32Array(bw * bh);
+    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) sub[y * bw + x] = L[(y + y0) * W + x + x0];
+    const B = boxBlur(sub, bw, bh, rb);
+    const at = (x, y) => {
+      const xi = Math.round(x - x0), yi = Math.round(y - y0);
+      return xi >= 0 && yi >= 0 && xi < bw && yi < bh ? B[yi * bw + xi] : NaN;
+    };
+    const ca0 = Math.cos(o.angle), sa0 = Math.sin(o.angle);
+    // 단위원 좌표(u,v) → 사진 좌표 (장축 방향으로 늘림)
+    const P = (u, v) => [o.cx + u * (o.long / 2) * ca0 - v * (o.short / 2) * sa0, o.cy + u * (o.long / 2) * sa0 + v * (o.short / 2) * ca0];
+    const NOFF = 25, offs = Array.from({ length: NOFF }, (_, i) => -0.36 + (0.72 * i) / (NOFF - 1));
+    let best = { s: 0, th: 0 }, perTh = [];
+    for (let k = 0; k < 36; k++) {
+      const th = (Math.PI * k) / 36, tx = Math.cos(th), ty = Math.sin(th), nx = -ty, ny = tx;
+      const prof = offs.map((d) => {
+        let sum = 0, c = 0;
+        for (let t = -0.62; t <= 0.62; t += 0.04) {
+          const u = d * nx + t * tx, v = d * ny + t * ty;
+          if (u * u + v * v > 0.7) continue;
+          const val = at(...P(u, v)); if (!Number.isNaN(val)) { sum += val; c++; }
+        }
+        return c ? sum / c : NaN;
+      });
+      const mid = (NOFF - 1) / 2;
+      // 가운데 근처(±2칸)의 골/마루 세기 vs 단면 전체의 들쭉날쭉함
+      let peak = 0;
+      for (let i = mid - 2; i <= mid + 2; i++) {
+        const side = (prof[i - 4] + prof[i + 4]) / 2;
+        if (!Number.isNaN(side)) peak = Math.max(peak, Math.abs(prof[i] - side));
+      }
+      const diffs = [];
+      for (let i = 1; i < NOFF; i++) if (!Number.isNaN(prof[i]) && !Number.isNaN(prof[i - 1])) diffs.push(Math.abs(prof[i] - prof[i - 1]));
+      diffs.sort((a, b) => a - b);
+      const noise = (diffs[(diffs.length / 2) | 0] || 0.3) + 0.25;
+      const sc = peak / noise;
+      perTh.push(sc);
+      if (sc > best.s) best = { s: sc, th };
+    }
+    const kb = Math.round((best.th * 36) / Math.PI), kp = (kb + 18) % 36;
+    const cross = Math.min(best.s, Math.max(perTh[kp], perTh[(kp + 1) % 36], perTh[(kp + 35) % 36]));
+    // 각인 유무: 약 안쪽(r<0.65)의 세밀한 밝기 변화량(질감 흐림 후) / 바깥 띠
+    let e = 0, c = 0;
+    for (let v = -0.65; v <= 0.65; v += 0.05) for (let u = -0.65; u <= 0.65; u += 0.05) {
+      if (u * u + v * v > 0.42) continue;
+      const [x, y] = P(u, v), [x2, y2] = P(u + 0.05, v), [x3, y3] = P(u, v + 0.05);
+      const a = at(x, y), b = at(x2, y2), d = at(x3, y3);
+      if ([a, b, d].some(Number.isNaN)) continue;
+      e += Math.abs(a - b) + Math.abs(a - d); c++;
+    }
+    return { lineScore: +best.s.toFixed(2), lineAngle: best.th, crossScore: +cross.toFixed(2), markEnergy: +(c ? e / c : 0).toFixed(3) };
+  }
+
+  // ---------- 각인 지문 ----------
+  // 약을 장·단축 1로 편 단위원 위의 32×32 격자에서 밝기 기울기(새김 윤곽)를 잰다.
+  // 크기·거리와 무관하고, 가장자리 띠(r>0.8)는 그림자·테두리라 뺀다. 평균 0, 분산 1로 정규화.
+  const DN = 32;
+  function descriptor(o, L, W, H, rots) {
+    const out = [];
+    const step = Math.max(1, o.short / 64);
+    const gL = (x, y) => {
+      const xi = Math.min(W - 2, Math.max(1, Math.round(x))), yi = Math.min(H - 2, Math.max(1, Math.round(y)));
+      const s2 = Math.max(1, Math.round(step));
+      const xa = Math.min(W - 1, xi + s2), xb = Math.max(0, xi - s2), ya = Math.min(H - 1, yi + s2), yb = Math.max(0, yi - s2);
+      return Math.hypot(L[yi * W + xa] - L[yi * W + xb], L[ya * W + xi] - L[yb * W + xi]);
+    };
+    for (let k = 0; k < rots; k++) {
+      const ang = o.angle + (2 * Math.PI * k) / rots;
+      const ca = Math.cos(ang), sa = Math.sin(ang);
+      const d = new Float32Array(DN * DN);
+      let m = 0, cnt = 0;
+      for (let gy = 0; gy < DN; gy++) for (let gx = 0; gx < DN; gx++) {
+        const u = ((gx + 0.5) / DN) * 2 - 1, v = ((gy + 0.5) / DN) * 2 - 1;
+        if (u * u + v * v > 0.64) continue;
+        const pu = u * (o.long / 2), pv = v * (o.short / 2);
+        const x = o.cx + pu * ca - pv * sa, y = o.cy + pu * sa + pv * ca;
+        const val = gL(x, y);
+        d[gy * DN + gx] = val; m += val; cnt++;
+      }
+      // 작은 위치 어긋남을 허용하도록 격자를 한 번 부드럽게
+      const sm = new Float32Array(DN * DN);
+      for (let gy = 0; gy < DN; gy++) for (let gx = 0; gx < DN; gx++) {
+        let a = 0, c2 = 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const X = gx + dx, Y = gy + dy;
+          if (X >= 0 && Y >= 0 && X < DN && Y < DN) { a += d[Y * DN + X]; c2++; }
+        }
+        sm[gy * DN + gx] = a / c2;
+      }
+      m = 0;
+      for (let gy = 0; gy < DN; gy++) for (let gx = 0; gx < DN; gx++) {
+        const u = ((gx + 0.5) / DN) * 2 - 1, v = ((gy + 0.5) / DN) * 2 - 1;
+        if (u * u + v * v > 0.64) { d[gy * DN + gx] = 0; continue; }
+        d[gy * DN + gx] = sm[gy * DN + gx]; m += sm[gy * DN + gx];
+      }
+      m /= cnt || 1;
+      let sd = 0;
+      for (let gy = 0; gy < DN; gy++) for (let gx = 0; gx < DN; gx++) {
+        const u = ((gx + 0.5) / DN) * 2 - 1, v = ((gy + 0.5) / DN) * 2 - 1;
+        if (u * u + v * v > 0.64) continue;
+        const i = gy * DN + gx; d[i] -= m; sd += d[i] * d[i];
+      }
+      sd = Math.sqrt(sd / (cnt || 1)) || 1;
+      for (let i = 0; i < d.length; i++) d[i] /= sd;
+      out.push(d);
+    }
+    return rots === 1 ? out[0] : out;
+  }
+  // 두 지문의 상관(-1~1). a가 회전별 배열이면 가장 잘 맞는 회전
+  function descSim(a, b) {
+    const one = (x) => { let s = 0; for (let i = 0; i < x.length; i++) s += x[i] * b[i]; return s / x.length; };
+    if (Array.isArray(a)) { let best = -1; for (const x of a) best = Math.max(best, one(x)); return best; }
+    return one(a);
+  }
+
   function boxBlur(src, w, h, r) {
     const tmp = new Float32Array(w * h), out = new Float32Array(w * h);
     for (let y = 0; y < h; y++) {
@@ -647,7 +780,7 @@
     return out;
   }
 
-  const api = { analyze, colorProbs, rgb2lab, SHAPES, COLORS };
+  const api = { analyze, colorProbs, rgb2lab, descSim, SHAPES, COLORS, DN };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Vision = api;
 })(typeof self !== 'undefined' ? self : this);

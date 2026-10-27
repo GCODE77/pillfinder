@@ -151,6 +151,30 @@
       const has = normImprint(r.pf) || normImprint(r.pb);
       add('imprint', 0.8, has ? 0.35 : 0.9);
     }
+    // 내가 확인한 약과 지문이 닮았으면 강하게
+    if (obs.learnedSim && obs.learnedSim.has(r.s)) add('learned', 15, Math.min(1, (obs.learnedSim.get(r.s) - 0.3) / 0.15));
+    // 면 특징(사진 한 면마다): 분할선이 보이는지, 각인 없는 빈 면인지 — 식약처 분할선·각인 칸과 대조
+    if (obs.faces && obs.faces.length) {
+      const fl = [!!(r.lf && r.lf.trim()) || /분할선/.test(r.pf || ''), !!(r.lb && r.lb.trim()) || /분할선/.test(r.pb || '')];
+      const blankSide = (t) => !normImprint(t) && !/마크/.test(t || '');
+      const fb = [blankSide(r.pf), blankSide(r.pb)];
+      let lv = 0, lw = 0, bv = 0, bw = 0;
+      for (const f of obs.faces) {
+        if (f.line !== undefined) {
+          const c = Math.abs(2 * f.line - 1); // 확신도
+          // 보이는 면에 분할선이 있으면 어느 한 면엔 분할선, 없으면 분할선 없는 면이 하나는 있어야
+          const v = f.line >= 0.5 ? (fl[0] || fl[1] ? 1 : 0.1) : (!fl[0] || !fl[1] ? 1 : 0.3);
+          lv += c * v; lw += c;
+        }
+        if (f.blank !== undefined) {
+          const c = Math.abs(2 * f.blank - 1);
+          const v = f.blank >= 0.5 ? (fb[0] || fb[1] ? 1 : 0.2) : (!fb[0] || !fb[1] ? 1 : 0.3);
+          bv += c * v; bw += c;
+        }
+      }
+      if (lw) add('line', 2 * lw / obs.faces.length, lv / lw);
+      if (bw) add('blank', 1.5 * bw / obs.faces.length, bv / bw);
+    }
     return { score: wsum ? ssum / wsum : 0, parts };
   }
 
