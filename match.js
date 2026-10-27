@@ -38,7 +38,7 @@
   // DB 색 칸은 "하양", "하양, 노랑", "주황|하양" 같은 형태
   function dbColors(r) {
     const out = [];
-    for (const v of [r.c1, r.c2]) if (v) for (const t of String(v).split(/[,|/·\s]+/)) if (t && !out.includes(t)) out.push(t);
+    for (const v of [r.c1, r.c2]) if (v) for (const t of String(v).split(/[,|/·\s]+/)) if (t && !/^(옅은|진한|연한)$/.test(t) && !out.includes(t)) out.push(t);
     return out;
   }
 
@@ -144,7 +144,8 @@
         for (const t of sides.concat(sides.length > 1 ? [both] : [])) v = Math.max(v, imprintSim(q, t));
         if (v * c >= best * conf) { best = v; conf = c; }
       }
-      if (best || conf) add('imprint', 1 + 4 * conf, best);
+      // 자신 없는 판독(신뢰도 낮음, 한 글자)은 거의 반영하지 않는다 — 엉터리 판독이 순위를 흔들지 않게
+      if (best || conf) add('imprint', 5 * conf * conf, best);
     } else if (obs.noImprint) {
       // 판독기가 '글자 없음'으로 확신할 때만 약하게 반영
       const has = normImprint(r.pf) || normImprint(r.pb);

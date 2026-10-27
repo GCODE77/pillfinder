@@ -65,6 +65,19 @@ function toCanvas(gray, w, h, rot, invert, bgv = 255) {
   return c;
 }
 
+function blur1(g, w, h) {
+  const o = new Uint8ClampedArray(g.length);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let s = 0, n = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const X = x + dx, Y = y + dy;
+      if (X >= 0 && Y >= 0 && X < w && Y < h) { s += g[Y * w + X]; n++; }
+    }
+    o[y * w + x] = s / n;
+  }
+  return o;
+}
+
 const clean = (t) => String(t || '').toUpperCase().replace(/[^A-Z0-9-]/g, '');
 
 // crop: {w,h,detail,raw}, aspect: 장단축비. 반환: [{text, conf(0~1), how}]
@@ -81,6 +94,10 @@ export async function readImprint(crop, aspect, onProgress) {
     jobs.push({ g: crop.raw, rot, inv: false, how: '인쇄' });
     if (crop.relief) jobs.push({ g: crop.relief, rot, inv: false, how: '윤곽' });
   }
+  // 실제 사진의 음각 각인은 표면 질감 때문에 살짝 흐린 원본을 조금 기울여 읽을 때 가장 잘 읽혔다
+  const soft = blur1(crop.raw, crop.w, crop.h);
+  const tilts = aspect < 1.15 ? [-20, 20, 160, 200] : [-12, 12, 168, 192];
+  for (const rot of [0, 180, ...tilts]) jobs.push({ g: soft, rot, inv: false, how: '흐림' });
   const reads = [];
   let i = 0;
   for (const j of jobs) {
@@ -100,7 +117,7 @@ export async function readImprint(crop, aspect, onProgress) {
     else { cur.n++; if (r.conf > cur.conf) { cur.conf = r.conf; cur.how = r.how; } }
   }
   return [...by.values()]
-    .map((r) => ({ text: r.text, conf: Math.min(0.95, r.conf * (1 + 0.1 * (r.n - 1)) * (r.text.length === 1 ? 0.6 : 1)), how: r.how }))
+    .map((r) => ({ text: r.text, conf: Math.min(0.95, r.conf * (1 + 0.1 * (r.n - 1)) * (r.text.length === 1 ? 0.4 : 1)), how: r.how }))
     .sort((a, b) => b.conf - a.conf)
     .slice(0, 4);
 }

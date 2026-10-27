@@ -1,7 +1,7 @@
 // 필파인더 화면 로직
 import { readImprint, warmUpOcr } from './ocr.js';
 
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.0.2';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -447,11 +447,15 @@ function renderResult(fresh) {
     fillSelect($('#oColor2'), COLOR_LIST, '', o.colors[1] ? `자동 (${cTop(o.colors[1])})` : '없음');
     $('#oSize').value = o.mm ? `${o.mm.long.toFixed(1)} x ${o.mm.short.toFixed(1)}` : '';
     const best = o.imprints.slice().sort((a, b) => b.conf - a.conf);
-    const front = best.find((r) => r.side === 0), back = best.find((r) => r.side === 1);
+    // 확실한 판독(50% 이상, AI 포함)만 입력칸에 넣는다. 자신 없는 글자는 아래 칩으로만 보여 준다
+    const sure = best.filter((r) => r.conf >= 0.5);
+    const front = sure.find((r) => r.side === 0), back = sure.find((r) => r.side === 1);
     $('#oImprint').value = [front && front.text, back && back.text].filter(Boolean).join(' ');
+    if (!sure.length) obsEdit = { imprint: '' }; // 엉터리 판독이 순위를 흔들지 않게
     $('#reads').innerHTML = best.length
       ? best.map((r) => `<button class="chip" data-read="${esc(r.text)}">${esc(r.text)} <span class="hint">${r.how === 'AI' ? 'AI' : Math.round(r.conf * 100) + '%'}</span></button>`).join('')
-      : '<span class="hint">글자를 읽지 못했습니다. 각인이 있으면 위에 직접 넣어 주세요.</span>';
+      : '';
+    if (!sure.length) $('#reads').insertAdjacentHTML('afterbegin', '<div class="hint" style="width:100%;color:#fde68a">각인을 확실히 읽지 못했습니다. 약에 새겨진 글자를 위 칸에 넣으면 훨씬 정확해집니다(예: PAC).' + (best.length ? ' 비슷하게 읽힌 글자:' : '') + '</div>');
     $('#obsNote').textContent = sides[0].ai && sides[0].ai.note ? 'AI 메모: ' + sides[0].ai.note : '';
     $('#btnBack').textContent = sides.length > 1 ? '뒷면 다시 찍기' : '뒷면도 찍기';
   }

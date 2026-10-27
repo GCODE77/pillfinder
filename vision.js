@@ -28,6 +28,8 @@
     ['검정', [40, 40, 42]],
   ];
   const COLORS = [...new Set(COLOR_PROTOS.map((c) => c[0]))];
+  // 식약처 낱알식별 25,461품목의 색 분포(2026-10). 애매할 때 드문 색(청록·자주 등)으로 쏠리지 않게 약하게 반영
+  const COLOR_PRIOR = { 하양: 9470, 분홍: 3720, 노랑: 3210, 주황: 2590, 갈색: 1480, 파랑: 1440, 연두: 1270, 초록: 950, 빨강: 680, 회색: 200, 보라: 130, 청록: 120, 자주: 60, 검정: 55, 남색: 50 };
 
   // ---------- 색 공간 ----------
   const LIN = new Float32Array(256);
@@ -69,7 +71,10 @@
     const sigma2 = 2 * 10 * 10;
     let sum = 0;
     const out = {};
-    for (const k of COLORS) { out[k] = Math.exp(-best[k] / sigma2); sum += out[k]; }
+    for (const k of COLORS) { out[k] = Math.exp(-best[k] / sigma2) * Math.pow((COLOR_PRIOR[k] || 50) / 9470, 0.25); sum += out[k]; }
+    // 아주 밝고 옅은 색(L>80, 채도<32)은 조명에 따라 하양으로 분류된 약일 수 있다
+    const C = Math.hypot(a, b);
+    if (L > 80 && C < 32) { const add = sum * 0.6 * Math.exp(-C / 14) * Math.min(1, (L - 80) / 8); out['하양'] += add; sum += add; }
     for (const k of COLORS) out[k] /= sum || 1;
     return out;
   }
@@ -384,8 +389,15 @@
     const diag = Math.hypot(W, H);
     const scoreOf = (c) => {
       const dc = Math.hypot(c.cx - W / 2, c.cy - H / 2) / diag;
-      const cut = c.edge > 0 ? 0.25 : 1;
-      return c.area * (1 - dc) * cut;
+      // 가장자리에 걸친 것(포장지·손가락·물건)은 크게 감점, 많이 걸칠수록 더
+      const edgeFrac = c.edge / Math.max(1, (c.x1 - c.x0 + c.y1 - c.y0 + 2) * 2);
+      const cut = c.edge > 0 ? 0.15 * Math.max(0.1, 1 - edgeFrac * 4) : 1;
+      const bw = c.x1 - c.x0 + 1, bh = c.y1 - c.y0 + 1;
+      const elong = Math.max(bw, bh) / Math.max(1, Math.min(bw, bh));
+      const shapeOk = elong > 3.5 ? 0.15 : 1;                 // 알약은 장단축비가 대개 3 이하
+      const sizeOk = c.area > n * 0.25 ? 0.2 : 1;              // 화면 대부분을 덮는 건 바닥일 가능성
+      const fill = c.area / (bw * bh);                         // 속이 빈 테두리·선 모양 제외
+      return c.area * (1 - dc) * cut * shapeOk * sizeOk * (fill < 0.45 ? 0.3 : 1);
     };
     let order = cands.slice().sort((a, b) => scoreOf(b) - scoreOf(a));
     if (opts.seed) {
@@ -422,11 +434,48 @@
     };
   }
 
-  function describe(c, lab, W, H, L, A, B, bgLab, opts) {
+  // 덩어리에 가늘게 붙은 것(그림자 꼬리, 손금, 바닥 무늬)을 열림 연산으로 떼고 가장 큰 몸통만 남긴다
+  function cleanBlob(c, lab, W, H) {
+    const pad = 2, bw = c.x1 - c.x0 + 1 + pad * 2, bh = c.y1 - c.y0 + 1 + pad * 2;
+    let m = new Uint8Array(bw * bh);
+    for (let y = c.y0; y <= c.y1; y++) for (let x = c.x0; x <= c.x1; x++) if (lab[y * W + x] === c.id) m[(y - c.y0 + pad) * bw + (x - c.x0 + pad)] = 1;
+    const r = Math.max(1, Math.round(Math.sqrt(c.area) * 0.045));
+    const op = rep(dilate, rep(erode, m, bw, bh, r), bw, bh, r);
+    const { lab: l2, comps } = label(op, bw, bh);
+    const big = comps.sort((a, b) => b.area - a.area)[0];
+    if (!big || big.area < c.area * 0.6) return null; // 너무 많이 깎이면 원래대로
     const px = [];
+    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) if (l2[y * bw + x] === big.id) px.push([x + c.x0 - pad, y + c.y0 - pad]);
+    const contour = traceContour(l2, big.id, bw, bh, big.start).map(([x, y]) => [x + c.x0 - pad, y + c.y0 - pad]);
+    return { px, contour };
+  }
+  function hull(pts) {
+    const P = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const lo = [], up = [];
+    for (const p of P) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+    for (let i = P.length - 1; i >= 0; i--) { const p = P[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+    return lo.slice(0, -1).concat(up.slice(0, -1));
+  }
+  // 볼록 껍질을 촘촘한 점으로(반지름 곡선 칸이 비지 않게)
+  function densify(poly, step = 1) {
+    const out = [];
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length], n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / step));
+      for (let k = 0; k < n; k++) out.push([a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n]);
+    }
+    return out;
+  }
+
+  function describe(c, lab, W, H, L, A, B, bgLab, opts) {
+    let px = [];
     for (let y = c.y0; y <= c.y1; y++) for (let x = c.x0; x <= c.x1; x++) if (lab[y * W + x] === c.id) px.push([x, y]);
-    const contour = traceContour(lab, c.id, W, H, c.start);
-    const f = shapeFeatures(px, contour);
+    let contour = traceContour(lab, c.id, W, H, c.start);
+    const cl = cleanBlob(c, lab, W, H);
+    if (cl) { px = cl.px; contour = cl.contour; }
+    // 약은 거의 볼록하다 → 모양은 볼록 껍질로 판정(그림자·각인 때문에 생긴 오목한 홈 무시)
+    const shapeOutline = densify(hull(contour.map(([x, y]) => [x + 0.5, y + 0.5])));
+    const f = shapeFeatures(px, shapeOutline.map(([x, y]) => [x - 0.5, y - 0.5]));
     const shape = shapeProbs(f, c.area);
     // 색: 가장자리 그림자·반사를 피하려고 중심부(축 70%)만
     const ca = Math.cos(f.angle), sa = Math.sin(f.angle);
@@ -441,7 +490,8 @@
     }
     // 흰 종이·회색 바닥이면 그 색 틀어짐만큼 화이트밸런스 보정
     const bgC = Math.hypot(bgLab[1], bgLab[2]);
-    const wb = bgC < 14 && bgLab[0] > 35 ? [bgLab[1] * 0.85, bgLab[2] * 0.85] : [0, 0];
+    // 손바닥·나무 같은 색 있는 바닥을 기준으로 삼으면 약 색이 반대로 틀어진다 → 거의 무채색일 때만
+    const wb = bgC < 7 && bgLab[0] > 35 ? [bgLab[1] * 0.8, bgLab[2] * 0.8] : [0, 0];
     const lp = pts.map((p) => [p[0], p[1] - wb[0], p[2] - wb[1], p[3]]); // [L,a,b,장축 위치]
     // 반짝이는 반사(아주 밝고 무채색)는 약 전체가 그렇지 않은 한 뺀다
     const noGlare = lp.filter((p) => !(p[0] > 92 && Math.hypot(p[1], p[2]) < 6));
