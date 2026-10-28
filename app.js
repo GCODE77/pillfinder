@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.8.2';
+const APP_VERSION = '1.8.3';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -574,6 +574,7 @@ function currentObs() {
   if (obsEdit.mm !== undefined) o.mm = obsEdit.mm;
   if (obsEdit.form) o.form = { pick: obsEdit.form };
   if (obsEdit.has) o.has = obsEdit.has;
+  if (obsEdit.has === 'none') { o.imprints = []; o.noImprint = false; }   // 각인 없음을 골랐으면 흐리게 읽힌 글자는 무시
   return o;
 }
 

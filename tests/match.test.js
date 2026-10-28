@@ -63,5 +63,13 @@ r = M.rank(DB.filter((x) => ['3', '11'].includes(x.s)), { shape: { 장방형: 0.
 t('각인 있음(글자는 모름) → 각인 없는 약(11)이 아래', r[0].r.s === '3');
 r = M.rank(DB.filter((x) => ['3', '11'].includes(x.s)), { shape: { 장방형: 0.5, 삼각형: 0.5 }, has: 'none' });
 t('각인 없음 → 각인 없는 약(11)이 위', r[0].r.s === '11');
+{
+  // 모양·색이 딱 맞는 '각인 있는' 약(3)과 어중간한 '각인 없는' 약(11): 각인 없음을 고르면 후자가 위, 아무것도 안 고르면 전자가 위
+  const pool = DB.filter((q) => ['3', '11'].includes(q.s));
+  const o0 = { shape: { 장방형: 0.95 }, colors: [one('하양')], aspect: 2.4 };
+  t('각인 없음을 고르면 모양이 더 맞는 각인 있는 약(3)보다 각인 없는 약(11)이 위', M.rank(pool, { ...o0, has: 'none' })[0].r.s === '11');
+  t('각인 유무를 안 고르면 모양이 맞는 약(3)이 위', M.rank(pool, o0)[0].r.s === '3');
+  t('각인 있음을 고르면 각인 없는 약(11)이 아래', M.rank(pool, { ...o0, has: 'has' })[0].r.s === '3');
+}
 console.log(fail ? `${fail}개 실패` : '모두 통과');
 process.exit(fail ? 1 : 0);

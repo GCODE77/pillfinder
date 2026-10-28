@@ -183,7 +183,8 @@
     }
     if (obs.has === 'has' || obs.has === 'none') {
       const h = hasImprint(r);
-      if (!reads.length || obs.has === 'none') add('hasimp', 3, obs.has === 'has' ? (h ? 1 : 0.1) : (h ? 0.12 : 1));
+      // 사용자가 직접 고른 값이므로 제형 선택처럼 강하게: 안 맞는 약은 사실상 뒤로 밀린다
+      if (!reads.length || obs.has === 'none') add('hasimp', 10, obs.has === 'has' ? (h ? 1 : 0.03) : (h ? 0.02 : 1));
     }
     // 내가 확인한 약과 지문이 닮았으면 강하게
     if (obs.learnedSim && obs.learnedSim.has(r.s)) add('learned', 15, Math.min(1, (obs.learnedSim.get(r.s) - 0.3) / 0.15));
