@@ -81,6 +81,10 @@ t('크기 오차 ±10%: 19.5mm로 18mm 약은 ±6%에선 빠지고 ±10%에선 �
 t('분할선: 종류 일치(−)는 만점, +는 낮음, 없음은 거의 0', (() => { const r = { lf: '-', pf: '분할선' }; return M.lineFit(r, '-') === 1 && M.lineFit(r, '+') < 0.4 && M.lineFit(r, 'none') < 0.1 && M.lineFit({}, 'none') === 1; })());
 t('분할선: 필터 − 한 줄은 −형만 통과, 분할선 없음은 매끈한 약만', (() => { const a = { lf: '-', pf: '분할선' }, b = { lf: '+' }, c = { pf: 'AB' }; const f1 = M.manualFilter({ line: '-' }), f2 = M.manualFilter({ line: 'none' }); return f1(a) && !f1(b) && !f1(c) && f2(c) && !f2(a); })());
 t('분할선: 순위 — 사용자가 −를 고르면 같은 −약이 +약보다 위', (() => { const A = { s: 'a', sh: '원형', c1: '하양', lf: '-' }, B = { s: 'b', sh: '원형', c1: '하양', lf: '+' }; return M.rank([B, A], { shape: { 원형: 1 }, line: '-' })[0].r.s === 'a'; })());
+t('비슷한 약(분할선): 분할선 있는 약의 대체약은 분할선 있는 약이 매끈한 약보다 위(크기 같아도)', (() => {
+  const R = { s: 'r', sh: '원형', c1: '하양', L: 8, W: 8, T: 3, f: '정제', lf: '-' }, A = { s: 'a', sh: '원형', c1: '하양', L: 8, W: 8, T: 3, f: '정제' }, B = { s: 'b', sh: '원형', c1: '하양', L: 8.1, W: 8, T: 3, f: '정제', lf: '-' };
+  return M.sizeAlike([A, B], R)[0].r.s === 'b' && M.similarLook([A, B], R)[0].r.s === 'b' && M.sizeAlike([A, B], R, { sameLine: false })[0].r.s === 'a';
+})());
 t('비슷한 약: 자기 자신은 빠진다', !M.similarLook(DB, DB.find((x) => x.s === '8')).some((x) => x.r.s === '8'));
 t('같은 성분 약: 8 → 12(일반의약품)', M.sameIngredient(DB, DB.find((x) => x.s === '8')).map((x) => x.r.s).join() === '12');
 t('같은 성분 약: 주성분 정보 없으면 빈 목록', M.sameIngredient(DB, DB[0]).length === 0);

@@ -1,7 +1,7 @@
 # 필파인더 — 세션 핸드오프
 
 - 최종 갱신: 2026-10-28
-- 현재 버전: **v1.11.0** — 배포됨: https://gcode77.github.io/pillfinder/ (저장소 GCODE77/pillfinder)
+- 현재 버전: **v1.11.1** — 배포됨: https://gcode77.github.io/pillfinder/ (저장소 GCODE77/pillfinder)
 - 저작권: © GLORY KIM
 - 형제 앱: `../약 계수하기`(필카운터, https://gcode77.github.io/pillcounter/) — 같은 디자인·배포 방식
 
@@ -148,3 +148,4 @@ node tests/make-demo.js              # 데모 데이터 다시 만들기
 - 데이터: `lf`/`lb` = 분할선 종류('-' 한 줄 4,791 · '+' 십자 210 · '기타'), 각인 칸에 '분할선'만 적힌 약도 있다. `M.lineOf(r)`={has,kinds}, `M.lineFit(r, want)`(want: none/has/-/+/기타 → 0~1).
 - 매칭: 결과 화면 '분할선(반절선)' 선택(자동/없음/−/+/모양 모름) → `obs.line`, 가중 7(`splitline`). 사진에서 자동 감지한 분할선 유무(`obs.faces[].line`)는 기존대로.
 - 약 검색: '분할선' 칩(없음 / − 한 줄 / + 십자 / 있음), `manualFilter({line})`. 카드·비교표에 분할선 종류 표시. 카드 각인 표시에서는 '분할선' 글자를 뺐다(`printTxt`).
+- v1.11.1: **비슷한 약 찾기도 분할선 위주**. 기준 약에 분할선이 있으면 같은 분할선(종류까지)인 약이 위로(`lineWant`: 없음→'none', 종류 있으면 그 종류, 모르면 'has'). 크기·제형·모양 탭은 '분할선 같게' 칩(기본 켜짐, 점수에 0.12+0.88×일치도를 곱해 확실히 위로), 생김새 탭은 `obs.line`으로 반영. 매끈한 약의 대체약은 매끈한 약 위주.

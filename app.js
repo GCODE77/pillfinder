@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.11.0';
+const APP_VERSION = '1.11.1';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -831,6 +831,7 @@ async function showItem(seq) {
       <div class="bar" id="simSizeOpt">
         <button class="chip on" id="simForm">제형 같게 (${esc(M.formGroup(r))})</button>
         <button class="chip on" id="simShape">모양 같게 (${esc(r.sh || '기타')})</button>
+        <button class="chip on" id="simLine">분할선 같게 (${esc(lineTxt(r) ? '분할선 ' + lineTxt(r) : '없음')})</button>
       </div>
       <div class="bar">
         <button class="chip ${M.isOtc(r) ? '' : 'on'}" id="simOtc">처방전 없이 살 수 있는 일반의약품만</button>
@@ -866,13 +867,13 @@ async function showItem(seq) {
     toast('기억했습니다. 내 약에도 저장했어요');
   });
   // 비슷한 약: 생김새(크기·모양·색·제형) / 같은 성분, 일반의약품만, 싼 순
-  const sim = { mode: 'size', otc: !M.isOtc(r), sort: '', form: true, shape: true };
+  const sim = { mode: 'size', otc: !M.isOtc(r), sort: '', form: true, shape: true, line: true };
   const mmd = (v) => { if (v === null) return ''; const x = Math.round(v * 100) / 100; return `${x > 0 ? '+' : x < 0 ? '−' : '±'}${Math.abs(x).toFixed(2)}`; };
   const drawSim = () => {
     let list, note;
     $('#simSizeOpt').classList.toggle('hidden', sim.mode !== 'size');
     if (sim.mode === 'size') {
-      list = M.sizeAlike(data.db, r, { otcOnly: sim.otc, sameForm: sim.form, sameShape: sim.shape, limit: 60 }).map((x) => ({
+      list = M.sizeAlike(data.db, r, { otcOnly: sim.otc, sameForm: sim.form, sameShape: sim.shape, sameLine: sim.line, limit: 60 }).map((x) => ({
         r: x.r, score: x.score,
         note: `이 약과 차이 · 장축 ${mmd(x.d.L)}` + (x.d.W !== null ? ` · 단축 ${mmd(x.d.W)}` : '') + (x.d.T !== null ? ` · 두께 ${mmd(x.d.T)}` : r.T ? ' · 두께 자료 없음' : '') + 'mm',
       }));
@@ -895,7 +896,7 @@ async function showItem(seq) {
   $('#item').querySelectorAll('[data-sim]').forEach((b) => b.addEventListener('click', () => { sim.mode = b.dataset.sim; $('#item').querySelectorAll('[data-sim]').forEach((c) => c.classList.toggle('on', c === b)); drawSim(); }));
   $('#simOtc').addEventListener('click', (e) => { sim.otc = !sim.otc; e.currentTarget.classList.toggle('on', sim.otc); drawSim(); });
   $('#simSort').addEventListener('change', (e) => { sim.sort = e.target.value; drawSim(); });
-  for (const k of ['form', 'shape']) $('#sim' + k[0].toUpperCase() + k.slice(1)).addEventListener('click', (e) => { sim[k] = !sim[k]; e.currentTarget.classList.toggle('on', sim[k]); drawSim(); });
+  for (const k of ['form', 'shape', 'line']) $('#sim' + k[0].toUpperCase() + k.slice(1)).addEventListener('click', (e) => { sim[k] = !sim[k]; e.currentTarget.classList.toggle('on', sim[k]); drawSim(); });
   setTimeout(drawSim, 0);
   $('#cmpBtn').addEventListener('click', (e) => { toggleCmp(seq); const on = cmp.includes(seq); e.currentTarget.classList.toggle('on', on); e.currentTarget.textContent = on ? '비교에 담김' : '비교에 담기'; });
   $('#shareBtn').addEventListener('click', async () => {

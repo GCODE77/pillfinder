@@ -66,6 +66,13 @@
     if (!kinds.length) return 0.5;   // 분할선은 있는데 종류 자료가 없음
     return kinds.includes(want) ? 1 : 0.25;
   }
+  // 이 약의 분할선 상태를 매칭용 값으로: 없음 → 'none', 종류가 있으면 그 종류, 종류 모르는 있음 → 'has'
+  function lineWant(r) {
+    if (r.line) return r.line;
+    if (!r.s) return '';
+    const { has, kinds } = lineOf(r);
+    return has ? (kinds[0] || 'has') : 'none';
+  }
   // 각인이 있는 약인가(글자·마크가 하나라도 있으면). '분할선'만 있으면 각인 없음
   function hasImprint(r) {
     return [r.pf, r.pb].some((x) => String(x || '').replace(/분할선|없음|[\s\/\-_.,()]/g, '').length > 0);
@@ -251,6 +258,7 @@
       aspect: r.L && r.W ? Math.max(r.L, r.W) / Math.min(r.L, r.W) : undefined,
       mm: r.L ? { long: Math.max(r.L, r.W || 0), short: Math.min(r.L, r.W || r.L) } : null,
       form: { pick: formGroup(r) },
+      line: lineWant(r) || undefined,   // 분할선 있는 약이면 분할선 있는 약 위주로
     };
     const out = [];
     for (const x of db) {
@@ -264,7 +272,8 @@
   }
   // 조제 테스트용 대체약: 색·각인은 보지 않고 장축·단축·두께와 제형·모양만 (조제기·분포기 시험은 크기·모양이 같으면 된다)
   // ref = 약 한 개 또는 {L, W, T, form, shape}. 결과마다 크기 차(mm) d = {L, W, T}
-  function sizeAlike(db, ref, { otcOnly = false, sameForm = true, sameShape = true, limit = 40 } = {}) {
+  function sizeAlike(db, ref, { otcOnly = false, sameForm = true, sameShape = true, sameLine = true, limit = 40 } = {}) {
+    const wantLine = sameLine ? lineWant(ref) : '';
     const L = Math.max(ref.L || 0, ref.W || 0), W = Math.min(ref.L || 0, ref.W || ref.L || 0), T = ref.T || 0;
     if (!L) return [];
     const fg = ref.form || (ref.f !== undefined ? formGroup(ref) : ''), sh = ref.shape || ref.sh || '';
@@ -278,6 +287,7 @@
       const d = { L: xl - L, W: W ? xw - W : null, T: T && x.T ? x.T - T : null };
       const z = (d.L / tol(L)) ** 2 + (d.W !== null ? (d.W / tol(W)) ** 2 : 0) + (d.T !== null ? (d.T / tol(T)) ** 2 : T ? 1.5 : 0);
       let score = Math.exp(-z / 8);
+      if (wantLine) score *= 0.12 + 0.88 * lineFit(x, wantLine);   // 분할선이 같은 약이 확실히 위로
       if (!sameShape && sh) score *= 0.5 + 0.5 * shapeSim(sh, x.sh || '기타');
       if (!sameForm && fg) score *= formGroup(x) === fg ? 1 : 0.6;
       if (score < 0.01) continue;
@@ -367,7 +377,7 @@
     return out.slice(0, limit).map((x) => x.r);
   }
 
-  const api = { rank, scoreOne, manualFilter, formGroup, FORM_DETAIL, similarLook, sizeAlike, lineOf, lineFit, sameIngredient, isOtc, hasImprint, imprintMatchScore, searchName, normImprint, imprintSim, dbColors, choseong, COLOR_FAMILY, shapeSim, colorSim };
+  const api = { rank, scoreOne, manualFilter, formGroup, FORM_DETAIL, similarLook, sizeAlike, lineOf, lineFit, lineWant, sameIngredient, isOtc, hasImprint, imprintMatchScore, searchName, normImprint, imprintSim, dbColors, choseong, COLOR_FAMILY, shapeSim, colorSim };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Match = api;
 })(typeof self !== 'undefined' ? self : this);
