@@ -29,7 +29,7 @@ const BASE = 'https://apis.data.go.kr/1471000';
 const EP = {
   pill: `${BASE}/MdcinGrnIdntfcInfoService03/getMdcinGrnIdntfcInfoList03`,
   easy: `${BASE}/DrbEasyDrugInfoService/getDrbEasyDrugList`,
-  permit: `${BASE}/DrugPrdtPrmsnInfoService07/getDrugPrdtPrmsnDtlInq06`,
+  permit: `${BASE}/DrugPrdtPrmsnInfoService08/getDrugPrdtPrmsnDtlInq08`,
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
