@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.13.0';
+const APP_VERSION = '1.14.0';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -108,7 +108,10 @@ function glyph(r) {
   return `<svg viewBox="0 0 92 66" width="92" height="66"><defs><linearGradient id="g${r.s}" x1="0" x2="1"><stop offset=".5" stop-color="${c1}"/><stop offset=".5" stop-color="${c2}"/></linearGradient></defs><g fill="url(#g${r.s})" stroke="rgba(0,0,0,.35)">${path}</g><text x="46" y="37" text-anchor="middle" font-size="11" font-weight="800" fill="rgba(0,0,0,.55)">${esc((r.pf || '').slice(0, 8))}</text></svg>`;
 }
 const imgOf = (r, big) => (r.img ? `<img src="${esc(r.img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(document.createRange().createContextualFragment(this.dataset.g))" data-g="${esc(glyph(r))}">` : glyph(r));
-const otcBadge = (r) => (r.o ? `<span class="badge ${/전문/.test(r.o) ? 'etc' : 'otc'}">${esc(/전문/.test(r.o) ? '전문' : '일반')}</span>` : '');
+// 허가 상태(취하·유효기간만료 등)·수입·마약류·희귀 표시: 허가정보에서 온 값이라 데이터를 새로 받아야 생긴다
+const statTxt = (r) => (r.st ? `허가 ${r.st}` : '');
+const otcBadge = (r) => (r.o ? `<span class="badge ${/전문/.test(r.o) ? 'etc' : 'otc'}">${esc(/전문/.test(r.o) ? '전문' : '일반')}</span>` : '') +
+  (r.st ? `<span class="badge off">${esc(statTxt(r))}</span>` : '') + (r.nk ? `<span class="badge nk">${esc(r.nk === '한외마약' ? '한외마약' : r.nk + '(마약류)')}</span>` : '') + (r.im ? '<span class="badge im">수입</span>' : '') + (r.ra ? '<span class="badge ra">희귀</span>' : '');
 const won = (v) => `${Math.round(v).toLocaleString()}원`;
 const priceTxt = (r) => (r.pr ? `약가 ${won(r.pr)}/${r.pu || '개'}` : '');
 // 약가가 없는 약: 일반의약품은 약국마다 값이 달라 공식 가격이 없고, 전문의약품은 약가 자료에 없는 경우
@@ -827,7 +830,9 @@ async function showItem(seq) {
   document.title = `${r.n} — 필파인더`;
   const isFav = favs.includes(seq);
   const spec = [
-    ['업체', r.e], ['구분', r.o], ['분류', r.cl], ['제형', r.f], ['모양', r.sh],
+    ['업체', r.e], ['구분', [r.o, r.im && '수입', r.nk && r.nk, r.ra && '희귀의약품'].filter(Boolean).join(' · ')],
+    ['허가 상태', r.st ? `${r.st}${r.cd ? ` (${r.cd.slice(0, 4)}.${+r.cd.slice(4, 6)}.${+r.cd.slice(6)})` : ''} — 더 이상 만들어지지 않거나 약국에서 구하기 어려울 수 있어요. 약사에게 확인하세요.` : ''],
+    ['분류', r.cl], ['제형', r.f], ['모양', r.sh],
     ['색', M.dbColors(r).join(', ')], ['각인 앞', r.pf], ['각인 뒤', r.pb], ['마크', [r.mf, r.mb].filter(Boolean).join(' / ')],
     ['분할선', [r.lf && '앞 ' + r.lf, r.lb && '뒤 ' + r.lb].filter(Boolean).join(', ')],
     ['크기', r.L ? `장축 ${r.L}mm${r.W ? ` · 단축 ${r.W}mm` : ''}${r.T ? ` · 두께 ${r.T}mm` : ''}` : ''],
@@ -868,6 +873,7 @@ async function showItem(seq) {
       </div>
       <div class="bar">
         <button class="chip ${M.isOtc(r) ? '' : 'on'}" id="simOtc">처방전 없이 살 수 있는 일반의약품만</button>
+        <button class="chip hidden" id="simOff"></button>
         <select class="text" id="simSort"><option value="">${'닮은 순'}</option><option value="price">싼 순 (보험 약가)</option></select>
       </div>
       <div class="hint" id="simNote"></div>
@@ -900,7 +906,7 @@ async function showItem(seq) {
     toast('기억했습니다. 내 약에도 저장했어요');
   });
   // 비슷한 약: 생김새(크기·모양·색·제형) / 같은 성분, 일반의약품만, 싼 순
-  const sim = { mode: 'size', otc: !M.isOtc(r), sort: '', form: true, shape: true, line: true, coat: false };
+  const sim = { mode: 'size', otc: !M.isOtc(r), sort: '', form: true, shape: true, line: true, coat: false, off: false };
   const mmd = (v) => { if (v === null) return ''; const x = Math.round(v * 100) / 100; return `${x > 0 ? '+' : x < 0 ? '−' : '±'}${Math.abs(x).toFixed(2)}`; };
   const drawSim = () => {
     let list, note;
@@ -922,12 +928,17 @@ async function showItem(seq) {
       const cheap = list.filter((x) => x.r.pr).sort((a, b) => a.r.pr - b.r.pr)[0];
       if (cheap && r.pr && cheap.r.pr < r.pr) note += ` 가장 싼 약은 ${cheap.r.n} (${won(cheap.r.pr)}/${cheap.r.pu || '개'}) — 이 약보다 ${won(r.pr - cheap.r.pr)} 저렴(보험 약가 기준).`;
     }
+    // 허가가 끝난 약(취하·유효기간만료 등)은 구하기 어려우니 기본으로 뺀다
+    const nOff = list.filter((x) => x.r.st).length;
+    if (!sim.off) list = list.filter((x) => !x.r.st);
+    const offBtn = $('#simOff'); if (offBtn) { offBtn.classList.toggle('hidden', !nOff && !sim.off); offBtn.textContent = sim.off ? '허가 끝난 약 포함 중' : `허가 끝난 약 ${nOff}개 숨김 · 보기`; offBtn.classList.toggle('on', sim.off); }
     if (sim.sort === 'price') list = list.slice().sort((a, b) => (a.r.pr ?? 1e12) - (b.r.pr ?? 1e12));
     $('#simNote').textContent = note;
     $('#simList').innerHTML = list.length ? list.slice(0, 40).map((x, i) => card(x.r, { num: i + 1, score: x.score, note: x.note })).join('') : `<div class="empty-msg">${sim.otc ? '조건에 맞는 일반의약품이 없습니다. "일반의약품만"을 끄고 보세요.' : '비슷한 약이 없습니다.'}</div>`;
   };
   $('#item').querySelectorAll('[data-sim]').forEach((b) => b.addEventListener('click', () => { sim.mode = b.dataset.sim; $('#item').querySelectorAll('[data-sim]').forEach((c) => c.classList.toggle('on', c === b)); drawSim(); }));
   $('#simOtc').addEventListener('click', (e) => { sim.otc = !sim.otc; e.currentTarget.classList.toggle('on', sim.otc); drawSim(); });
+  $('#simOff').addEventListener('click', () => { sim.off = !sim.off; drawSim(); });
   $('#simSort').addEventListener('change', (e) => { sim.sort = e.target.value; drawSim(); });
   for (const k of ['form', 'shape', 'line', 'coat']) if ($('#sim' + k[0].toUpperCase() + k.slice(1))) $('#sim' + k[0].toUpperCase() + k.slice(1)).addEventListener('click', (e) => { sim[k] = !sim[k]; e.currentTarget.classList.toggle('on', sim[k]); drawSim(); });
   setTimeout(drawSim, 0);
@@ -997,7 +1008,7 @@ function showCmp(seqs) {
   const mm = (v) => (v ? `${v}mm` : '');
   const dd = (x, y) => { if (!x || !y) return ''; const d = Math.round((y - x) * 100) / 100; return d ? `<small>① 대비 ${d > 0 ? '+' : '−'}${Math.abs(d)}mm</small>` : '<small style="color:#86efac">① 과 같음</small>'; };
   const rows = [
-    ['구분', (r) => r.o], ['제형', (r) => r.f], ['코팅', (r) => M.coatOf(r)], ['모양', (r) => r.sh], ['색', (r) => M.dbColors(r).join(', ')],
+    ['구분', (r) => [r.o, r.im && '수입', r.nk, r.ra && '희귀'].filter(Boolean).join(' · ')], ['허가 상태', (r) => statTxt(r) || '정상'], ['제형', (r) => r.f], ['코팅', (r) => M.coatOf(r)], ['모양', (r) => r.sh], ['색', (r) => M.dbColors(r).join(', ')],
     ['각인 앞', (r) => r.pf], ['각인 뒤', (r) => r.pb], ['분할선', (r) => lineTxt(r) || '없음'],
     ['장축', (r) => mm(r.L), 'L'], ['단축', (r) => mm(r.W), 'W'], ['두께', (r) => mm(r.T), 'T'],
     ['업체', (r) => r.e], ['분류', (r) => r.cl], ['주성분', (r) => r.in],

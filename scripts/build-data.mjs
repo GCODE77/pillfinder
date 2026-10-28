@@ -212,6 +212,13 @@ async function main() {
         const codes = [...new Set(parts.map((m) => m[1]))].sort();
         if (codes.length) { pp.ig = codes.join('|'); const nm = parts.map((m) => m[2].trim()).filter(Boolean).join('·'); if (nm) pp.in = nm.length > 60 ? nm.slice(0, 58) + '…' : nm; }
       }
+      // 허가 상태·구분(허가정보): 취하/유효기간만료/폐업/행정(취소)는 더 이상 유통되지 않을 수 있는 약, 수입업 품목, 마약류, 희귀의약품
+      if (pp) {
+        if (r.CANCEL_NAME && r.CANCEL_NAME !== '정상') { pp.st = String(r.CANCEL_NAME).replace(/[()]/g, ''); if (/^\d{8}$/.test(String(r.CANCEL_DATE || ''))) pp.cd = String(r.CANCEL_DATE); }
+        if (/수입/.test(r.INDUTY_TYPE || '')) pp.im = 1;
+        if (r.NARCOTIC_KIND_CODE) pp.nk = r.NARCOTIC_KIND_CODE;
+        if (r.RARE_DRUG_YN === 'Y') pp.ra = 1;
+      }
       const cur = details.get(seq);
       const ingr = pick(r, 'MAIN_ITEM_INGR', 'MATERIAL_NAME');
       const extra = {
