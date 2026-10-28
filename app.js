@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.10.1';
+const APP_VERSION = '1.11.0';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -109,7 +109,9 @@ const otcBadge = (r) => (r.o ? `<span class="badge ${/전문/.test(r.o) ? 'etc' 
 const won = (v) => `${Math.round(v).toLocaleString()}원`;
 const priceTxt = (r) => (r.pr ? `약가 ${won(r.pr)}/${r.pu || '개'}` : '');
 const sizeTxt = (r) => (r.L ? [`장 ${r.L}`, r.W && `단 ${r.W}`, r.T && `두께 ${r.T}`].filter(Boolean).join(' · ') + 'mm' : '');
-const printTxt = (r) => [r.pf, r.pb].filter(Boolean).join(' / ');
+// 분할선(반절선) 표시: − 한 줄, + 십자, 종류 모르면 '있음'
+const lineTxt = (r) => { const l = M.lineOf(r); return l.has ? (l.kinds.length ? l.kinds.map((k) => ({ '-': '−', '+': '+' }[k] || k)).join('/') : '있음') : ''; };
+const printTxt = (r) => [r.pf, r.pb].filter((x) => x && x.trim() !== '분할선').join(' / ');
 
 // ---------- 약 비교(2개 담기) ----------
 let cmp = [];
@@ -133,11 +135,11 @@ function toggleCmp(seq) {
 const preCard = (x) => (x.key ? `<input type="checkbox" class="ck" tabindex="-1" ${x.checked ? 'checked' : ''}>` : '') + (x.num ? `<span class="num">${x.num}</span>` : '');
 function card(r, extra = {}) {
   const fg = M.formGroup(r);
-  const feat = [r.sh, /캡슐/.test(fg) && fg, M.dbColors(r).join('·'), printTxt(r) && `<b>${esc(printTxt(r))}</b>`, r.pr && `<span class="price">${esc(priceTxt(r))}</span>`].filter(Boolean);
+  const feat = [r.sh, /캡슐/.test(fg) && fg, M.dbColors(r).join('·'), printTxt(r) && `<b>${esc(printTxt(r))}</b>`, lineTxt(r) && `분할선 ${lineTxt(r)}`, r.pr && `<span class="price">${esc(priceTxt(r))}</span>`].filter(Boolean);
   // 크기는 비교하기 쉽게 따로 한 줄(장축·단축·두께)
   const size = r.L ? `<span class="size"><i>장</i>${r.L} <i>단</i>${r.W || '-'} <i>두께</i>${r.T || '-'} <i>mm</i></span>` : '<span class="size"><i>크기 자료 없음</i></span>';
   const cmpb = extra.key ? '' : `<span class="cmpbtn${cmp.includes(r.s) ? ' on' : ''}" role="button" data-cmp="${esc(r.s)}">${cmp.includes(r.s) ? '비교 ✓' : '비교 +'}</span>`;
-  const why = extra.parts ? Object.entries(extra.parts).map(([k, v]) => `<span class="${v > 0.75 ? 'hi' : ''}">${{ shape: '모양', color: '색', aspect: '비율', size: '크기', imprint: '각인', line: '분할선', blank: '빈면', form: '제형', hasimp: '각인 유무', learned: '내가 확인한 약' }[k]} ${Math.round(v * 100)}</span>`).join('') : '';
+  const why = extra.parts ? Object.entries(extra.parts).map(([k, v]) => `<span class="${v > 0.75 ? 'hi' : ''}">${{ shape: '모양', color: '색', aspect: '비율', size: '크기', imprint: '각인', line: '분할선', blank: '빈면', form: '제형', hasimp: '각인 유무', splitline: '분할선', learned: '내가 확인한 약' }[k]} ${Math.round(v * 100)}</span>`).join('') : '';
   return `<button class="card${extra.checked ? ' sel' : ''}" data-seq="${esc(r.s)}"${extra.key ? ` data-key="${esc(extra.key)}"` : ''}>
     ${preCard(extra)}<div class="img">${imgOf(r)}</div>
     <div class="body"><div class="name">${otcBadge(r)}${esc(r.n)}</div><div class="sub">${esc(r.e)}${r.cl ? ' · ' + esc(r.cl) : ''}</div>
@@ -602,6 +604,7 @@ function currentObs() {
   if (obsEdit.mm !== undefined) o.mm = obsEdit.mm;
   if (obsEdit.form) o.form = { pick: obsEdit.form };
   if (obsEdit.has) o.has = obsEdit.has;
+  if (obsEdit.line) o.line = obsEdit.line;
   if (obsEdit.has === 'none') { o.imprints = []; o.noImprint = false; }   // 각인 없음을 골랐으면 흐리게 읽힌 글자는 무시
   return o;
 }
@@ -625,6 +628,7 @@ function renderResult(fresh, noHistory) {
     fillSelect($('#oColor'), COLOR_LIST, '', `자동 (${cTop(o.colors[0])})`);
     fillSelect($('#oColor2'), COLOR_LIST, '', o.colors[1] ? `자동 (${cTop(o.colors[1])})` : '없음');
     { const sel = $('#oHas'); sel.innerHTML = '<option value="">자동</option><option value="has">있음 (글자 모름)</option><option value="none">없음</option>'; sel.value = ''; }
+    { const sel = $('#oLine'); sel.innerHTML = LINE_OPTS.map(([v, t]) => `<option value="${v}">${t}</option>`).join(''); sel.value = ''; }
     const hp = o.form ? o.form.hard : 0;
     autoPick = { shape: topShape, form: o.form ? (hp >= 0.5 ? '경질캡슐' : hp >= 0.2 ? '' : '정제') : '' };
     fillSelect($('#oForm'), ['정제', '경질캡슐', '연질캡슐'], '', o.form ? `자동 (${hp >= 0.5 ? '경질캡슐 ' + Math.round(hp * 100) + '%' : hp >= 0.2 ? '불확실' : '정제 같음'})` : '자동');
@@ -667,6 +671,7 @@ function saveHistory() {
   store.set('pf.hist', hist);
 }
 
+const LINE_OPTS = [['', '자동'], ['none', '없음 (매끈함)'], ['-', '있음 − 한 줄'], ['+', '있음 + 십자'], ['has', '있음 (모양 모름)']];
 const editObs = () => {
   const sz = $('#oSize').value.match(/([\d.]+)\s*[x×*]?\s*([\d.]+)?/);
   obsEdit = {
@@ -676,11 +681,12 @@ const editObs = () => {
     imprint: $('#oImprint').value,
     form: $('#oForm').value || undefined,
     has: $('#oHas').value || undefined,
+    line: $('#oLine').value || undefined,
     mm: sz ? { long: Math.max(+sz[1], +(sz[2] || sz[1])), short: Math.min(+sz[1], +(sz[2] || sz[1])) } : null,
   };
   rerank();
 };
-['#oShape', '#oColor', '#oColor2', '#oForm', '#oHas'].forEach((s) => $(s).addEventListener('change', editObs));
+['#oShape', '#oColor', '#oColor2', '#oForm', '#oHas', '#oLine'].forEach((s) => $(s).addEventListener('change', editObs));
 // 그림으로 고르기: 눌러서 선택칸 값을 바꾸고(다시 누르면 자동), 선택칸과 항상 같은 상태로 보여 준다
 let autoPick = { shape: '', form: '' };
 function syncTiles() {
@@ -719,7 +725,9 @@ $('#btnBack').addEventListener('click', () => {
 });
 
 // ---------- 약 검색 (이름 · 각인 · 크기 · 모양 · 색 — 아는 것만 넣으면 된다) ----------
-const filt = { shapes: [], colors: [], forms: [], formD: [], has: '', otc: '' };
+const filt = { shapes: [], colors: [], forms: [], formD: [], has: '', otc: '', line: '' };
+$('#fLine').innerHTML = [['none', '분할선 없음'], ['-', '− 한 줄'], ['+', '+ 십자'], ['has', '있음(전체)']].map(([v, t]) => `<button class="chip" data-line="${v}">${t}</button>`).join('');
+$('#fLine').addEventListener('click', (e) => { const b = e.target.closest('[data-line]'); if (!b) return; filt.line = filt.line === b.dataset.line ? '' : b.dataset.line; document.querySelectorAll('#fLine .chip').forEach((c) => c.classList.toggle('on', c.dataset.line === filt.line)); runFilter(); });
 $('#fOtc').innerHTML = '<button class="chip" data-otc="일반">일반의약품만 (처방전 없이)</button><button class="chip" data-otc="전문">전문의약품만</button>';
 $('#fOtc').addEventListener('click', (e) => { const b = e.target.closest('[data-otc]'); if (!b) return; filt.otc = filt.otc === b.dataset.otc ? '' : b.dataset.otc; document.querySelectorAll('#fOtc .chip').forEach((c) => c.classList.toggle('on', c.dataset.otc === filt.otc)); runFilter(); });
 $('#fSort').addEventListener('change', runFilter);
@@ -739,7 +747,7 @@ let fRes = [], fShown = 0, fT;
 for (const id of ['#q', '#fImprint', '#fL', '#fW', '#fT']) $(id).addEventListener('input', () => { clearTimeout(fT); fT = setTimeout(runFilter, 200); });
 $('#fSimilar').addEventListener('change', runFilter);
 $('#fReset').addEventListener('click', () => {
-  filt.shapes = []; filt.colors = []; filt.forms = []; filt.formD = []; filt.has = ''; filt.otc = ''; $('#fSort').value = ''; $('#fTol').value = '0.06';
+  filt.shapes = []; filt.colors = []; filt.forms = []; filt.formD = []; filt.has = ''; filt.otc = ''; filt.line = ''; $('#fSort').value = ''; $('#fTol').value = '0.06';
   for (const id of ['#q', '#fImprint', '#fL', '#fW', '#fT']) $(id).value = '';
   document.querySelectorAll('#pgSearch .on').forEach((c) => c.classList.remove('on'));
   runFilter();
@@ -751,10 +759,10 @@ function runFilter() {
   $('#sumFormD').textContent = filt.formD.length ? '세부 제형 · ' + filt.formD.join(', ') : '세부 제형 (필름코팅·서방·장용…)';
   $('#sumShape').textContent = filt.shapes.length ? '모양 · ' + filt.shapes.join(', ') : '모양 (눌러서 고르기)';
   $('#sumColor').textContent = filt.colors.length ? '색 · ' + filt.colors.join(', ') : '색 (눌러서 고르기)';
-  const any = qn || imprint || filt.otc || filt.has || filt.formD.length || filt.forms.length || filt.shapes.length || filt.colors.length || size.L || size.W || size.T;
+  const any = qn || imprint || filt.otc || filt.has || filt.line || filt.formD.length || filt.forms.length || filt.shapes.length || filt.colors.length || size.L || size.W || size.T;
   if (!any) { fRes = []; $('#fList').innerHTML = ''; $('#fInfo').textContent = '아는 것만 넣어도 됩니다. 이름, 각인, 크기, 모양, 색 어느 것이든 좋아요.'; $('#fMore').classList.add('hidden'); return; }
   if (!data.ready) { $('#fInfo').textContent = '약 데이터가 없습니다.'; return; }
-  const f = M.manualFilter({ shapes: filt.shapes, colors: filt.colors, forms: filt.forms, formD: filt.formD, has: filt.has, otc: filt.otc, imprint, similarColors: $('#fSimilar').checked, size });
+  const f = M.manualFilter({ shapes: filt.shapes, colors: filt.colors, forms: filt.forms, formD: filt.formD, has: filt.has, otc: filt.otc, line: filt.line, imprint, similarColors: $('#fSimilar').checked, size });
   // 이름을 넣었으면 이름 검색 순서를 유지하고, 아니면 각인 일치 → 크기가 가까운 순
   fRes = (qn ? M.searchName(data.db, qn, 3000) : data.db).filter(f);
   if (!qn) {
@@ -764,7 +772,7 @@ function runFilter() {
   }
   $('#sumShape').textContent = filt.shapes.length ? '모양 · ' + filt.shapes.join(', ') : '모양 (눌러서 고르기)';
   $('#sumColor').textContent = filt.colors.length ? '색 · ' + filt.colors.join(', ') : '색 (눌러서 고르기)';
-  const cond = [qn && `"${qn}"`, imprint && `각인 ${imprint}`, filt.otc && `${filt.otc}의약품`, filt.has === 'has' && '각인 있음', filt.has === 'none' && '각인 없음', ...filt.forms, ...filt.formD, ...filt.shapes, ...filt.colors, size.L && `장축 ${size.L}`, size.W && `단축 ${size.W}`, size.T && `두께 ${size.T}`].filter(Boolean).join(' · ');
+  const cond = [qn && `"${qn}"`, imprint && `각인 ${imprint}`, filt.otc && `${filt.otc}의약품`, filt.has === 'has' && '각인 있음', filt.has === 'none' && '각인 없음', filt.line && ({ none: '분할선 없음', '-': '분할선 한 줄', '+': '분할선 십자', has: '분할선 있음' }[filt.line]), ...filt.forms, ...filt.formD, ...filt.shapes, ...filt.colors, size.L && `장축 ${size.L}`, size.W && `단축 ${size.W}`, size.T && `두께 ${size.T}`].filter(Boolean).join(' · ');
   if ($('#fSort').value === 'price') fRes = fRes.slice().sort((a, b) => (a.pr ?? 1e12) - (b.pr ?? 1e12));
   fShown = 0; $('#fList').innerHTML = '';
   $('#fInfo').textContent = fRes.length ? `${qn && fRes.length >= 3000 ? '3,000+' : fRes.length.toLocaleString()}개 · ${cond}` : `찾는 약이 없습니다. 조건을 줄여 보세요 (${cond})`;
@@ -956,7 +964,7 @@ function showCmp(seqs) {
   const dd = (x, y) => { if (!x || !y) return ''; const d = Math.round((y - x) * 100) / 100; return d ? `<small>① 대비 ${d > 0 ? '+' : '−'}${Math.abs(d)}mm</small>` : '<small style="color:#86efac">① 과 같음</small>'; };
   const rows = [
     ['구분', (r) => r.o], ['제형', (r) => r.f], ['모양', (r) => r.sh], ['색', (r) => M.dbColors(r).join(', ')],
-    ['각인 앞', (r) => r.pf], ['각인 뒤', (r) => r.pb],
+    ['각인 앞', (r) => r.pf], ['각인 뒤', (r) => r.pb], ['분할선', (r) => lineTxt(r) || '없음'],
     ['장축', (r) => mm(r.L), 'L'], ['단축', (r) => mm(r.W), 'W'], ['두께', (r) => mm(r.T), 'T'],
     ['업체', (r) => r.e], ['분류', (r) => r.cl], ['주성분', (r) => r.in],
     ['보험 약가', (r) => (r.pr ? `${won(r.pr)}/${r.pu || '개'}` : '')],

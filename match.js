@@ -51,6 +51,21 @@
       .replace(/[?？*＊_]/g, '?')            // 모르는 글자(와일드카드)
       .replace(/[^0-9A-Z가-힣?]+/g, '');
   }
+  // 분할선(반절선): lf/lb = '-'(한 줄) '+'(십자) '기타', 각인 칸에 '분할선'이라고만 적힌 약도 있다
+  function lineOf(r) {
+    const kinds = [r.lf, r.lb].map((x) => String(x || '').trim()).filter(Boolean);
+    const has = kinds.length > 0 || /분할선/.test(`${r.pf || ''}${r.pb || ''}`);
+    return { has, kinds };
+  }
+  // want: has(있음, 종류 모름) / none / '-' / '+' / '기타' → 약이 맞는 정도 0~1
+  function lineFit(r, want) {
+    const { has, kinds } = lineOf(r);
+    if (want === 'none') return has ? 0.03 : 1;
+    if (want === 'has') return has ? 1 : 0.05;
+    if (!has) return 0.03;
+    if (!kinds.length) return 0.5;   // 분할선은 있는데 종류 자료가 없음
+    return kinds.includes(want) ? 1 : 0.25;
+  }
   // 각인이 있는 약인가(글자·마크가 하나라도 있으면). '분할선'만 있으면 각인 없음
   function hasImprint(r) {
     return [r.pf, r.pb].some((x) => String(x || '').replace(/분할선|없음|[\s\/\-_.,()]/g, '').length > 0);
@@ -186,6 +201,8 @@
       // 사용자가 직접 고른 값이므로 제형 선택처럼 강하게: 안 맞는 약은 사실상 뒤로 밀린다
       if (!reads.length || obs.has === 'none') add('hasimp', 10, obs.has === 'has' ? (h ? 1 : 0.03) : (h ? 0.02 : 1));
     }
+    // 분할선(반절선) 종류: 사용자가 고른 값이므로 각인 유무처럼 강하게
+    if (obs.line) add('splitline', 7, lineFit(r, obs.line));
     // 내가 확인한 약과 지문이 닮았으면 강하게
     if (obs.learnedSim && obs.learnedSim.has(r.s)) add('learned', 15, Math.min(1, (obs.learnedSim.get(r.s) - 0.3) / 0.15));
     // 면 특징(사진 한 면마다): 분할선이 보이는지, 각인 없는 빈 면인지 — 식약처 분할선·각인 칸과 대조
@@ -292,7 +309,7 @@
   const sizeOk = (dbv, v, k) => !v || (dbv > 0 && Math.abs(dbv - v) <= sizeTol(v, k));
   // 세부 제형(식약처 제형명에 들어 있는 말로 찾는다)
   const FORM_DETAIL = { '필름코팅정': /필름코팅/, '나정': /나정/, '서방형': /서방/, '장용형': /장용/, '당의정': /당의/, '구강붕해': /구강붕해/, '츄어블': /추어블|츄어블|저작/, '다층정': /다층/ };
-  function manualFilter({ shapes = [], colors = [], imprint = '', similarColors = true, size = {}, forms = [], formD = [], has = '', otc = '' } = {}) {
+  function manualFilter({ shapes = [], colors = [], imprint = '', similarColors = true, size = {}, forms = [], formD = [], has = '', otc = '', line = '' } = {}) {
     const cset = new Set(similarColors ? colors.flatMap(COLOR_FAMILY) : colors);
     const q = normImprint(imprint);
     return (r) => {
@@ -304,6 +321,7 @@
       if (!sizeOk(r.L, size.L, size.tol) || !sizeOk(r.W, size.W, size.tol) || !sizeOk(r.T, size.T, size.tol)) return false;
       if (has === 'has' && !hasImprint(r)) return false;
       if (has === 'none' && hasImprint(r)) return false;
+      if (line && lineFit(r, line) < 0.4) return false;
       if (q && imprintMatchScore(q, r) < 0.62) return false;
       return true;
     };
@@ -349,7 +367,7 @@
     return out.slice(0, limit).map((x) => x.r);
   }
 
-  const api = { rank, scoreOne, manualFilter, formGroup, FORM_DETAIL, similarLook, sizeAlike, sameIngredient, isOtc, hasImprint, imprintMatchScore, searchName, normImprint, imprintSim, dbColors, choseong, COLOR_FAMILY, shapeSim, colorSim };
+  const api = { rank, scoreOne, manualFilter, formGroup, FORM_DETAIL, similarLook, sizeAlike, lineOf, lineFit, sameIngredient, isOtc, hasImprint, imprintMatchScore, searchName, normImprint, imprintSim, dbColors, choseong, COLOR_FAMILY, shapeSim, colorSim };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Match = api;
 })(typeof self !== 'undefined' ? self : this);

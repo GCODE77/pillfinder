@@ -259,6 +259,7 @@
               <div><label>크기</label><input class="text" id="oSize" placeholder="카드·100원 없이 촬영" inputmode="decimal"></div>
               <div><label>제형 (캡슐인가요?)</label><select class="text" id="oForm"></select></div>
               <div><label>각인 유무</label><select class="text" id="oHas"></select></div>
+              <div><label>분할선(반절선)</label><select class="text" id="oLine"></select></div>
             </div>
             <div class="hint" id="colorAsk" style="margin-top:8px"></div>
             <details class="tipbox" open><summary>그림으로 고르기 — 모양 · 제형</summary>
@@ -289,6 +290,7 @@
       <input class="text" id="q" placeholder="약 이름 · 초성(ㅌㅇㄹㄴ) · 업체 · 성분" autocomplete="off" enterkeyhint="search">
       <input class="text" id="fImprint" placeholder="각인 — 보이는 글자만 (모르는 글자는 ?  예: T?5)" autocapitalize="characters" autocomplete="off">
       <div class="panelrow"><span class="hint" style="font-weight:800">각인</span><div class="chips" id="fHas"></div></div>
+      <div class="panelrow"><span class="hint" style="font-weight:800">분할선</span><div class="chips" id="fLine"></div><span class="hint">반으로 쪼개는 홈(−  또는 +)</span></div>
       <div class="panelrow"><span class="hint" style="font-weight:800">구분</span><div class="chips" id="fOtc"></div>
         <select class="text" id="fSort" style="width:auto;margin-left:auto;padding:6px 10px;font-size:14px"><option value="">기본 순서</option><option value="price">싼 순 (보험 약가)</option></select></div>
       <div class="sgrid">
