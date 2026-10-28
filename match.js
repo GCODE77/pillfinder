@@ -66,6 +66,8 @@
     if (!kinds.length) return 0.5;   // 분할선은 있는데 종류 자료가 없음
     return kinds.includes(want) ? 1 : 0.25;
   }
+  // 분할선 일치 등급(정렬용): 2 = 같음, 1 = 분할선은 있는데 종류를 모름, 0 = 다름
+  const lineTier = (r, want) => { const f = lineFit(r, want); return f >= 0.9 ? 2 : f >= 0.4 ? 1 : 0; };
   // 이 약의 분할선 상태를 매칭용 값으로: 없음 → 'none', 종류가 있으면 그 종류, 종류 모르는 있음 → 'has'
   function lineWant(r) {
     if (r.line) return r.line;
@@ -265,9 +267,9 @@
       if (x.s === r.s || (otcOnly && !isOtc(x))) continue;
       let { score } = scoreOne(x, obs);
       if (r.T && x.T) { const d = (x.T - r.T) / (0.1 * r.T + 0.3); score *= 0.85 + 0.15 * Math.exp(-(d * d) / 2); }
-      out.push({ r: x, score });
+      out.push({ r: x, score, lt: obs.line ? lineTier(x, obs.line) : 0 });
     }
-    out.sort((a, b) => b.score - a.score);
+    out.sort((a, b) => (b.lt - a.lt) || (b.score - a.score));
     return out.slice(0, limit);
   }
   // 조제 테스트용 대체약: 색·각인은 보지 않고 장축·단축·두께와 제형·모양만 (조제기·분포기 시험은 크기·모양이 같으면 된다)
@@ -291,9 +293,10 @@
       if (!sameShape && sh) score *= 0.5 + 0.5 * shapeSim(sh, x.sh || '기타');
       if (!sameForm && fg) score *= formGroup(x) === fg ? 1 : 0.6;
       if (score < 0.01) continue;
-      out.push({ r: x, score, d });
+      out.push({ r: x, score, d, lt: wantLine ? lineTier(x, wantLine) : 0 });
     }
-    out.sort((a, b) => b.score - a.score);
+    // 분할선이 같은 약이 무조건 먼저, 그 안에서 크기가 가까운 순
+    out.sort((a, b) => (b.lt - a.lt) || (b.score - a.score));
     return out.slice(0, limit);
   }
   // 같은 성분 약: 주성분 코드 묶음(ig)이 같으면 같은 성분(함량은 다를 수 있음), 일반명코드(pg, 약가 자료)가 같으면 성분·함량·제형까지 같음

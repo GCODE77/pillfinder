@@ -85,6 +85,10 @@ t('비슷한 약(분할선): 분할선 있는 약의 대체약은 분할선 있�
   const R = { s: 'r', sh: '원형', c1: '하양', L: 8, W: 8, T: 3, f: '정제', lf: '-' }, A = { s: 'a', sh: '원형', c1: '하양', L: 8, W: 8, T: 3, f: '정제' }, B = { s: 'b', sh: '원형', c1: '하양', L: 8.1, W: 8, T: 3, f: '정제', lf: '-' };
   return M.sizeAlike([A, B], R)[0].r.s === 'b' && M.similarLook([A, B], R)[0].r.s === 'b' && M.sizeAlike([A, B], R, { sameLine: false })[0].r.s === 'a';
 })());
+t('비슷한 약(분할선): 크기가 더 어긋나도 분할선 같은 약이 크기만 정확한 매끈한 약보다 무조건 위', (() => {
+  const R = { s: 'r', sh: '원형', c1: '하양', L: 8, W: 8, T: 3, f: '정제', lf: '-' }, A = { s: 'a', sh: '원형', c1: '하양', L: 8, W: 8, T: 3, f: '정제' }, C = { s: 'c', sh: '원형', c1: '하양', L: 8.5, W: 8.4, T: 3.2, f: '정제', lf: '-' };
+  return M.sizeAlike([A, C], R)[0].r.s === 'c' && M.similarLook([A, C], R)[0].r.s === 'c';
+})());
 t('비슷한 약: 자기 자신은 빠진다', !M.similarLook(DB, DB.find((x) => x.s === '8')).some((x) => x.r.s === '8'));
 t('같은 성분 약: 8 → 12(일반의약품)', M.sameIngredient(DB, DB.find((x) => x.s === '8')).map((x) => x.r.s).join() === '12');
 t('같은 성분 약: 주성분 정보 없으면 빈 목록', M.sameIngredient(DB, DB[0]).length === 0);
