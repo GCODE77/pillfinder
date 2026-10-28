@@ -237,7 +237,12 @@ async function main() {
   let priced = 0, priceAt = '';
   if (WITH_PRICE) {
     try {
-      const rows = await fetchAll('약가', EP.price, { concurrency: 4, timeout: 60000 });
+      // 이 API는 조건 없이는 0건이라 품목명(itmNm, 부분 일치) 조건이 꼭 필요하다 → 알약 이름에 흔한 말로 나눠 받는다
+      const rows = [];
+      for (const term of ['정', '캡슐', '캅셀', '환', '트로키']) {
+        const part = await fetchAll(`약가(${term})`, EP.price, { concurrency: 6, timeout: 60000, extra: { itmNm: term } });
+        rows.push(...part);
+      }
       const best = new Map(); // 약품코드 → 가장 최근 적용 행
       for (const r of rows) {
         const cd = String(r.mdsCd || '').trim();
