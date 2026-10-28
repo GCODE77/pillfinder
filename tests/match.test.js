@@ -9,6 +9,10 @@ const DB = [
   { s: '5', n: '테스트캡슐', sh: '장방형', c1: '빨강', c2: '노랑', pf: 'CAP', L: 19, W: 7 },
   { s: '6', n: '테스트노랑원형', sh: '원형', c1: '노랑', pf: 'AB', L: 8, W: 8 },
   { s: '7', n: '테스트큰원형', sh: '원형', c1: '하양', pf: 'AB', L: 12, W: 12 },
+  { s: '8', n: '테스트경질약', sh: '장방형', c1: '하양', pf: 'ZZ', L: 18, W: 6.5, f: '경질캡슐제, 산제' },
+  { s: '9', n: '테스트필름약', sh: '장방형', c1: '하양', pf: 'ZZ', L: 18, W: 6.5, f: '필름코팅정' },
+  { s: '11', n: '테스트무각인약', sh: '삼각형', c1: '초록', pf: '', pb: '', L: 14, W: 14, f: '나정' },
+  { s: '10', n: '테스트연질약', sh: '타원형', c1: '노랑', pf: 'ZZ', L: 18, W: 9, f: '연질캡슐제, 액상' },
 ];
 const one = (c, v = 0.9) => ({ probs: { [c]: v, 하양: c === '하양' ? v : 0.05 } });
 let fail = 0;
@@ -37,5 +41,27 @@ t('크기: 장축 12 + 단축 12 → 큰 원형만', ids({ size: { L: 12, W: 12 
 t('크기: 두께만 4.5 → 장방형만(두께 모르는 약은 제외)', ids({ size: { T: 4.5 } }) === '3');
 t('크기+모양+색 함께: 하양 원형 장축 8', ids({ shapes: ['원형'], colors: ['하양'], size: { L: 8 } }) === '1,2');
 t('크기 오차 허용: 장축 8.5도 8~8.1mm 약이 걸림', ids({ size: { L: 8.5 } }) === '1,2,6');
+const topOf = (obs) => M.rank(DB.filter((x) => ['8', '9'].includes(x.s)), obs)[0].r.s;
+const base = { shape: { 장방형: 0.9 }, colors: [one('하양')], aspect: 2.7 };
+t('제형: 사진이 경질캡슐 같으면(p 0.9) 같은 모양의 캡슐(8)이 정제(9)보다 위', topOf({ ...base, form: { hard: 0.9 } }) === '8');
+t('제형: 사진이 캡슐 아니면(p 0.05) 정제(9)가 캡슐(8)보다 위', topOf({ ...base, form: { hard: 0.05 } }) === '9');
+t('제형: 사용자가 정제를 고르면 정제(9)', topOf({ ...base, form: { pick: '정제' } }) === '9');
+t('제형: 사용자가 경질캡슐을 고르면 8', topOf({ ...base, form: { pick: '경질캡슐' } }) === '8');
+t('제형: 애매하면(p 0.5) 순위에 영향 없음(점수 같음)', (() => { const a = M.scoreOne(DB[7], { ...base, form: { hard: 0.5 } }).score, b = M.scoreOne(DB[8], { ...base, form: { hard: 0.5 } }).score; return Math.abs(a - b) < 1e-9; })());
+t('제형 필터: 경질캡슐만 → 8', ids({ forms: ['경질캡슐'] }) === '8');
+t('제형 필터: 연질캡슐만 → 10', ids({ forms: ['연질캡슐'] }) === '10');
+t('제형 묶음: 필름코팅정=정제, 서방성캡슐제=경질캡슐', M.formGroup({ f: '필름코팅정' }) === '정제' && M.formGroup({ f: '서방성캡슐제, 펠렛' }) === '경질캡슐');
+t('세부 제형: 필름코팅정 → 9', ids({ formD: ['필름코팅정'] }) === '9');
+t('세부 제형: 나정 → 11', ids({ formD: ['나정'] }) === '11');
+t('각인 없음 조건 → 각인이 없는 약만(11)', ids({ has: 'none' }) === '11');
+t('각인 있음 조건 → 11 제외', !ids({ has: 'has' }).split(',').includes('11') && ids({ has: 'has' }).split(',').length === 10);
+t('보이는 글자만: Y5 → TY500(3)', ids({ imprint: 'Y5' }) === '3');
+t('모르는 글자 ?: T?5 → TY500(3)을 찾고 AB 계열은 제외', ids({ imprint: 'T?5' }).split(',').includes('3') && !ids({ imprint: 'T?5' }).split(',').includes('1'));
+t('모르는 글자 ?: ?Y → TY(3)와 XY(2)', ['2', '3'].every((s) => ids({ imprint: '?Y' }).split(',').includes(s)));
+t('각인 유사 정렬 점수: TY500에 대해 Y5(0.83) > AB(0.2 미만)', M.imprintMatchScore('Y5', DB[2]) > 0.8 && M.imprintMatchScore('Y5', DB[0]) < 0.4);
+r = M.rank(DB.filter((x) => ['3', '11'].includes(x.s)), { shape: { 장방형: 0.5, 삼각형: 0.5 }, has: 'has' });
+t('각인 있음(글자는 모름) → 각인 없는 약(11)이 아래', r[0].r.s === '3');
+r = M.rank(DB.filter((x) => ['3', '11'].includes(x.s)), { shape: { 장방형: 0.5, 삼각형: 0.5 }, has: 'none' });
+t('각인 없음 → 각인 없는 약(11)이 위', r[0].r.s === '11');
 console.log(fail ? `${fail}개 실패` : '모두 통과');
 process.exit(fail ? 1 : 0);

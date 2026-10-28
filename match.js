@@ -48,7 +48,12 @@
     return String(s || '')
       .toUpperCase()
       .replace(/분할선|마크|각인|없음|음각|양각|\(.*?\)/g, ' ')
-      .replace(/[^0-9A-Z가-힣]+/g, '');
+      .replace(/[?？*＊_]/g, '?')            // 모르는 글자(와일드카드)
+      .replace(/[^0-9A-Z가-힣?]+/g, '');
+  }
+  // 각인이 있는 약인가(글자·마크가 하나라도 있으면). '분할선'만 있으면 각인 없음
+  function hasImprint(r) {
+    return [r.pf, r.pb].some((x) => String(x || '').replace(/분할선|없음|[\s\/\-_.,()]/g, '').length > 0);
   }
   // 마모·오독으로 헷갈리는 글자 (거리 0.3)
   const CONF = {};
@@ -62,7 +67,7 @@
     for (let i = 1; i <= m; i++) {
       const cur = [i];
       for (let j = 1; j <= n; j++) {
-        const sub = a[i - 1] === b[j - 1] ? 0 : (CONF[a[i - 1]] && CONF[a[i - 1]][b[j - 1]]) || 1;
+        const sub = a[i - 1] === b[j - 1] || a[i - 1] === '?' || b[j - 1] === '?' ? 0 : (CONF[a[i - 1]] && CONF[a[i - 1]][b[j - 1]]) || 1;
         cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + sub);
       }
       prev = cur;
@@ -73,6 +78,10 @@
   function imprintSim(q, t) {
     if (!q || !t) return 0;
     if (q === t) return 1;
+    if (q.includes('?')) { // 보이는 글자만 적고 모르는 곳은 ? — 어디에 끼어 있어도 맞으면 높은 점수
+      const known = q.replace(/\?/g, '').length;
+      if (known) { try { if (new RegExp(q.replace(/\?/g, '.')).test(t)) return Math.min(0.97, 0.7 + 0.1 * known + 0.15 * (q.length / Math.max(q.length, t.length))); } catch (e) { /* 무시 */ } }
+    }
     if (t.includes(q) && q.length >= 2) return 0.75 + 0.2 * (q.length / t.length);
     if (q.includes(t) && t.length >= 2) return 0.7 + 0.2 * (t.length / q.length);
     const full = 1 - wlev(q, t) / Math.max(q.length, t.length);
@@ -83,6 +92,14 @@
       part *= 0.75 * (0.6 + 0.4 * q.length / t.length);
     }
     return Math.max(0, full, part);
+  }
+
+  function imprintMatchScore(q, r) {
+    if (!q) return 0;
+    const sides = [normImprint(r.pf), normImprint(r.pb)].filter(Boolean);
+    let v = 0;
+    for (const s of sides.concat(sides.length > 1 ? [sides.join('')] : [])) v = Math.max(v, imprintSim(q, s));
+    return v;
   }
 
   // ---------- 점수 ----------
@@ -115,6 +132,18 @@
           else v = 0.6 * Math.max(one(p.probs, rc[0]), one(q.probs, rc[0]));
         }
         add('color', 2.5, v);
+      }
+    }
+    if (obs.form) {
+      const g = formGroup(r);
+      if (obs.form.pick) {
+        // 사용자가 제형을 직접 골랐다: 같으면 만점, 다르면 크게 감점(기타는 애매하므로 중간)
+        add('form', 6, g === obs.form.pick ? 1 : g === '기타' ? 0.5 : 0.04);
+      } else if (obs.form.hard !== undefined) {
+        // 사진으로 본 '경질캡슐 같은 정도' p: 확신(0 또는 1에 가까울수록)만큼만 반영, 연질캡슐은 사진만으로 구분이 어려워 중간
+        const p = obs.form.hard, conf = Math.abs(2 * p - 1);
+        const v = g === '경질캡슐' ? p : g === '정제' ? 1 - p : g === '연질캡슐' ? 0.35 + 0.3 * (1 - p) : 0.5;
+        add('form', 2.2 * conf, v);
       }
     }
     if (obs.aspect && r.L && r.W) {
@@ -151,6 +180,10 @@
       // 판독기가 '글자 없음'으로 확신할 때만 약하게 반영
       const has = normImprint(r.pf) || normImprint(r.pb);
       add('imprint', 0.8, has ? 0.35 : 0.9);
+    }
+    if (obs.has === 'has' || obs.has === 'none') {
+      const h = hasImprint(r);
+      if (!reads.length || obs.has === 'none') add('hasimp', 3, obs.has === 'has' ? (h ? 1 : 0.1) : (h ? 0.12 : 1));
     }
     // 내가 확인한 약과 지문이 닮았으면 강하게
     if (obs.learnedSim && obs.learnedSim.has(r.s)) add('learned', 15, Math.min(1, (obs.learnedSim.get(r.s) - 0.3) / 0.15));
@@ -191,20 +224,31 @@
   }
 
   // ---------- 직접 고르기(칩) 필터 ----------
+  // 제형 묶음: 식약처 제형명 → 정제 / 경질캡슐 / 연질캡슐 / 기타 (캡슐이 전체의 20%, 장방형의 절반 이상이라 구분하면 후보가 크게 줄어든다)
+  function formGroup(r) {
+    const f = r.f || '';
+    if (/연질/.test(f)) return '연질캡슐';
+    if (/캡슐|스팬슐/.test(f)) return '경질캡슐';
+    if (/정|트로키/.test(f)) return '정제';
+    return '기타';
+  }
   // 크기 허용 오차(mm): 자로 잰 값은 거칠므로 ±0.6mm 또는 ±6% 중 큰 쪽
   const sizeTol = (v) => Math.max(0.6, v * 0.06);
   const sizeOk = (dbv, v) => !v || (dbv > 0 && Math.abs(dbv - v) <= sizeTol(v));
-  function manualFilter({ shapes = [], colors = [], imprint = '', similarColors = true, size = {} } = {}) {
+  // 세부 제형(식약처 제형명에 들어 있는 말로 찾는다)
+  const FORM_DETAIL = { '필름코팅정': /필름코팅/, '나정': /나정/, '서방형': /서방/, '장용형': /장용/, '당의정': /당의/, '구강붕해': /구강붕해/, '츄어블': /추어블|츄어블|저작/, '다층정': /다층/ };
+  function manualFilter({ shapes = [], colors = [], imprint = '', similarColors = true, size = {}, forms = [], formD = [], has = '' } = {}) {
     const cset = new Set(similarColors ? colors.flatMap(COLOR_FAMILY) : colors);
     const q = normImprint(imprint);
     return (r) => {
       if (shapes.length && !shapes.includes(r.sh || '기타')) return false;
       if (cset.size && !dbColors(r).some((c) => cset.has(c))) return false;
+      if (forms.length && !forms.includes(formGroup(r))) return false;
+      if (formD.length && !formD.some((k) => FORM_DETAIL[k] && FORM_DETAIL[k].test(r.f || ''))) return false;
       if (!sizeOk(r.L, size.L) || !sizeOk(r.W, size.W) || !sizeOk(r.T, size.T)) return false;
-      if (q) {
-        const sides = [normImprint(r.pf), normImprint(r.pb)];
-        if (!sides.some((t) => t && (t.includes(q) || (q.length >= 3 && imprintSim(q, t) >= 0.66)))) return false;
-      }
+      if (has === 'has' && !hasImprint(r)) return false;
+      if (has === 'none' && hasImprint(r)) return false;
+      if (q && imprintMatchScore(q, r) < 0.62) return false;
       return true;
     };
   }
@@ -249,7 +293,7 @@
     return out.slice(0, limit).map((x) => x.r);
   }
 
-  const api = { rank, scoreOne, manualFilter, searchName, normImprint, imprintSim, dbColors, choseong, COLOR_FAMILY, shapeSim, colorSim };
+  const api = { rank, scoreOne, manualFilter, formGroup, FORM_DETAIL, hasImprint, imprintMatchScore, searchName, normImprint, imprintSim, dbColors, choseong, COLOR_FAMILY, shapeSim, colorSim };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Match = api;
 })(typeof self !== 'undefined' ? self : this);

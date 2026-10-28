@@ -161,6 +161,7 @@
   .sform details{background:var(--panel);border-radius:12px;padding:8px 12px}
   .sform summary{cursor:pointer;font-weight:800;font-size:15px;padding:4px 0}
   .sform details .chips{margin:6px 0 4px}
+  .panelrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--panel);border-radius:12px;padding:8px 12px}
   .sinfo{position:sticky;top:0;z-index:5;background:var(--bg);padding:8px 2px;font-size:14px;color:var(--muted);font-weight:700}
   .empty-msg{text-align:center;color:var(--dim);padding:30px 10px;line-height:1.7}
   .fav{background:none;border:1.5px solid var(--line);color:var(--muted);min-height:40px;padding:8px 12px;font-size:14px}
@@ -222,10 +223,12 @@
               <div><label>모양</label><select class="text" id="oShape"></select></div>
               <div><label>색</label><select class="text" id="oColor"></select></div>
               <div><label>두 번째 색</label><select class="text" id="oColor2"></select></div>
-              <div><label>크기</label><input class="text" id="oSize" placeholder="동전 없이 촬영" inputmode="decimal"></div>
+              <div><label>크기</label><input class="text" id="oSize" placeholder="카드·동전 없이 촬영" inputmode="decimal"></div>
+              <div><label>제형 (캡슐인가요?)</label><select class="text" id="oForm"></select></div>
+              <div><label>각인 유무</label><select class="text" id="oHas"></select></div>
             </div>
             <div style="margin-top:8px"><label class="hint" style="font-weight:700">각인 글자 (앞뒤는 띄어 쓰기)</label>
-              <input class="text" id="oImprint" placeholder="읽은 글자가 없으면 직접 입력" autocapitalize="characters" autocomplete="off"></div>
+              <input class="text" id="oImprint" placeholder="보이는 글자만 적어도 돼요 (모르는 글자는 ?)" autocapitalize="characters" autocomplete="off"></div>
             <div class="reads" id="reads"></div>
             <div class="row" style="margin-top:10px">
               <button class="secondary" id="btnZoom">각인 확대 찍기</button>
@@ -245,12 +248,15 @@
   <section class="page" id="pgSearch">
     <div class="sform">
       <input class="text" id="q" placeholder="약 이름 · 초성(ㅌㅇㄹㄴ) · 업체 · 성분" autocomplete="off" enterkeyhint="search">
-      <input class="text" id="fImprint" placeholder="각인 글자 (예: TY, 500)" autocapitalize="characters" autocomplete="off">
+      <input class="text" id="fImprint" placeholder="각인 — 보이는 글자만 (모르는 글자는 ?  예: T?5)" autocapitalize="characters" autocomplete="off">
+      <div class="panelrow"><span class="hint" style="font-weight:800">각인</span><div class="chips" id="fHas"></div></div>
       <div class="sgrid">
         <label>장축 (mm)<input class="text" id="fL" inputmode="decimal" placeholder="길이" autocomplete="off"></label>
         <label>단축 (mm)<input class="text" id="fW" inputmode="decimal" placeholder="너비" autocomplete="off"></label>
         <label>두께 (mm)<input class="text" id="fT" inputmode="decimal" placeholder="두께" autocomplete="off"></label>
       </div>
+      <div class="panelrow"><span class="hint" style="font-weight:800">제형</span><div class="chips" id="fForms"></div></div>
+      <details><summary><span id="sumFormD">세부 제형 (필름코팅·서방·장용…)</span></summary><div class="chips" id="fFormD"></div></details>
       <details><summary><span id="sumShape">모양</span></summary><div class="chips" id="fShapes"></div></details>
       <details><summary><span id="sumColor">색</span> <label class="hint" style="font-weight:600;margin-left:6px"><input type="checkbox" id="fSimilar" checked> 비슷한 색도</label></summary><div class="chips" id="fColors"></div></details>
       <button class="ghost" id="fReset" style="min-height:40px">조건 모두 지우기</button>

@@ -372,6 +372,30 @@
     const minArea = n * 0.0015;
     let cands = comps.filter((c) => c.area >= minArea && c.area < n * 0.85);
 
+    // 2-1) 큰 진한 물체(검은 카드·손 등)가 Otsu 문턱을 끌어올려 옅은 흰 약이 묻히는 경우:
+    //      큰 물체 둘레는 그대로 두고, 그 밖의 영역만 따로 구한 낮은 문턱으로 다시 찾는다
+    if (th > 13 && opts.lowPass !== false) {
+      const strongIds = new Set(comps.filter((c) => c.area >= n * 0.02 && c.area < n * 0.85).map((c) => c.id));
+      if (strongIds.size) {
+        let ex = new Uint8Array(n);
+        for (let i = 0; i < n; i++) if (strongIds.has(lab[i])) ex[i] = 1;
+        ex = rep(dilate, ex, W, H, Math.max(3, Math.round(Math.min(W, H) / 60)));
+        const vals = [];
+        for (let i = 0; i < n; i++) if (!ex[i]) vals.push(Math.min(dist[i], 24));
+        const th2 = Math.max(9, Math.min(th * 0.75, otsu(Float32Array.from(vals), 24)));
+        if (th2 < th * 0.85) {
+          let m2 = new Uint8Array(n);
+          for (let i = 0; i < n; i++) m2[i] = dist[i] > (ex[i] ? th : th2) ? 1 : 0;
+          m2 = rep(dilate, rep(erode, m2, W, H, k), W, H, k);
+          m2 = rep(erode, rep(dilate, m2, W, H, k * 2), W, H, k * 2);
+          m2 = fillHoles(m2, W, H);
+          const r2 = label(m2, W, H);
+          const c2 = r2.comps.filter((c) => c.area >= minArea && c.area < n * 0.85);
+          if (c2.length) { lab = r2.lab; comps = r2.comps; cands = c2; }
+        }
+      }
+    }
+
     // 3) 색차로 못 찾으면(흰 약 + 흰 종이 등) 밝기 경계로 다시
     let usedEdge = false;
     if (!cands.length) {
@@ -433,10 +457,15 @@
       const near = (c) => (c.id === hit ? -1 : Math.hypot(c.cx - sx, c.cy - sy));
       order = cands.slice().sort((a, b) => near(a) - near(b));
     }
-    order = order.slice(0, 4);
+    order = order.slice(0, 6);
 
     if (!usedEdge && opts.tighten !== false) for (const c of order) tighten(c, lab, dist, L, bgMain.c[0], W, H, th);
-    const objects = order.map((c) => describe(c, lab, W, H, L, A, B, bgMain.c, opts));
+    const objects = order.map((c) => { const o = describe(c, lab, W, H, L, A, B, bgMain.c, opts); o.pre = scoreOf(c); return o; });
+    // 약다운 정도: 볼록하고(손가락·그림자 조각은 0.7대) 모양이 어느 한 종류로 뚜렷한 것(조각은 0.4대). 터치로 고른 경우는 그대로 둔다
+    if (!opts.seed) {
+      const pillness = (o) => Math.max(0.1, Math.min(1, (o.convex - 0.8) / 0.15)) * Math.max(0.15, Math.min(1, (Math.max(...Object.values(o.shape)) - 0.35) / 0.35));
+      objects.sort((a, b) => b.pre * pillness(b) - a.pre * pillness(a));
+    }
 
     // 5) 기준 동전: 약보다 크고, 동그랗고, 은색/구리색인 것
     let coin = null, pill = objects[0];
@@ -445,7 +474,7 @@
       const isCardLike = (o) => !o.cut && o.aspect > 1.45 && o.aspect < 1.75 && o.area / (o.long * o.short) > 0.9 && o.short > 0 && o.long / Math.max(1, Math.sqrt(W * H)) > 0.2;
       const cardC = objects.filter(isCardLike).sort((x, y) => y.area - x.area)[0];
       if (cardC) {
-        const p = objects.filter((o) => o !== cardC).sort((x, y) => y.area - x.area)[0];
+        const p = objects.filter((o) => o !== cardC)[0];   // 순위가 가장 높은(약다운) 나머지 물체
         if (p && cardC.area > p.area * 2.5 && !p.cut) { coin = Object.assign(cardC, { kind: 'card', mmLong: 85.6, mmShort: 53.98 }); pill = opts.seed ? (objects[0] === cardC ? p : objects[0]) : p; }
       }
     }
@@ -455,7 +484,7 @@
       const cc = objects.filter(isCoinLike).sort((a, b) => b.area - a.area)[0];
       if (cc) {
         const others = objects.filter((o) => o !== cc);
-        const p = others.sort((a, b) => b.area - a.area)[0];
+        const p = others[0];
         if (p && cc.area > p.area * 1.15 && p.area > cc.area * 0.08 && !p.cut) { coin = cc; pill = opts.seed ? (objects[0] === cc ? p : objects[0]) : p; }
       }
     }
@@ -474,7 +503,7 @@
     }
 
     return {
-      ok: true, W, H, th, usedEdge,
+      ok: true, W, H, th, usedEdge, bgs: bgCl.map((c) => ({ lab: c.c, n: c.n / samples.length })),
       bg: { lab: bgMain.c, chroma: Math.hypot(bgMain.c[1], bgMain.c[2]) },
       pill, coin, objects,
       contrast: pill ? pill.contrast : 0,
@@ -561,6 +590,43 @@
     return out;
   }
 
+  // 볼록도: 면적 / 볼록 껍질 면적 (약·동전·카드는 0.9 이상, 손가락·그림자 조각은 낮다)
+  function convexity(area, poly) {
+    let s = 0;
+    for (let i = 0; i < poly.length; i++) { const p = poly[i], q = poly[(i + 1) % poly.length]; s += p[0] * q[1] - q[0] * p[1]; }
+    s = Math.abs(s) / 2;
+    return s > 0 ? Math.min(1, +(area / s).toFixed(3)) : 0;
+  }
+  // 몸통 밝기 편차(L): 약은 한 색이라 작고, 피부·바닥 조각은 크다 (중심부 표본 기준)
+  function stdL(pts) {
+    if (pts.length < 10) return 0;
+    let m = 0; for (const p of pts) m += p[0]; m /= pts.length;
+    let v = 0; for (const p of pts) v += (p[0] - m) ** 2;
+    return +Math.sqrt(v / pts.length).toFixed(2);
+  }
+  // 경질캡슐 판별 특징: 캡슐은 양 끝이 반원(끝에서 0.5b 안쪽의 폭이 b의 0.84~0.87배), 타원은 더 뾰족(≈0.6), 모서리 둥근 정제는 끝이 평평(≈1.0).
+  // 장단축비 2 이상이면서 두 가지 색이면 가능성이 더 커진다. 결과는 0~1 (사용자가 제형을 직접 고르면 그 값이 우선)
+  function capsuleFeature(poly, f, twoTone) {
+    const ca = Math.cos(f.angle), sa = Math.sin(f.angle), a = f.long / 2, b = f.short / 2;
+    if (!(a > 0 && b > 0) || a / b < 1.5) return { end: 0, p: 0.02 };
+    const q = poly.map(([x, y]) => [(x - 0.5 - f.cx) * ca + (y - 0.5 - f.cy) * sa, -(x - 0.5 - f.cx) * sa + (y - 0.5 - f.cy) * ca]);
+    const halfW = (u) => {
+      let lo = Infinity, hi = -Infinity;
+      for (let i = 0; i < q.length; i++) {
+        const p0 = q[i], p1 = q[(i + 1) % q.length];
+        if ((p0[0] - u) * (p1[0] - u) <= 0 && p0[0] !== p1[0]) { const s = (u - p0[0]) / (p1[0] - p0[0]), v = p0[1] + s * (p1[1] - p0[1]); if (v < lo) lo = v; if (v > hi) hi = v; }
+      }
+      return hi > lo ? (hi - lo) / 2 : 0;
+    };
+    const at = a - 0.5 * b;
+    const end = (halfW(at) + halfW(-at)) / 2 / b;
+    const asp = a / b;
+    const endFit = Math.exp(-(((end - 0.84) / 0.08) ** 2) / 2);
+    const aspOk = asp < 1.7 ? 0 : asp < 2.0 ? (asp - 1.7) / 0.3 : asp <= 4.2 ? 1 : 0.5;
+    const z = -3.0 + 4.0 * endFit * aspOk + (twoTone ? 1.8 : 0);
+    return { end: +end.toFixed(3), p: +(1 / (1 + Math.exp(-z))).toFixed(3) };
+  }
+
   function describe(c, lab, W, H, L, A, B, bgLab, opts) {
     let px = [];
     for (let y = c.y0; y <= c.y1; y++) for (let x = c.x0; x <= c.x1; x++) if (lab[y * W + x] === c.id) px.push([x, y]);
@@ -623,6 +689,8 @@
       shape, shapeTop: topKey(shape),
       colors, colorTop: colors.map((c2) => topKey(c2.probs)),
       chroma: Math.hypot(labMed[1], labMed[2]), contrast,
+      capsule: capsuleFeature(shapeOutline, f, colors.length > 1),
+      convex: convexity(px.length, shapeOutline), lstd: stdL(pts),
       outline,
     };
   }
