@@ -74,6 +74,10 @@ t('각인 없음 → 각인 없는 약(11)이 위', r[0].r.s === '11');
 }
 t('비슷한 약: 전문 캡슐(8)과 생김새가 가장 비슷한 일반의약품 → 12', M.similarLook(DB, DB.find((x) => x.s === '8'), { otcOnly: true })[0].r.s === '12');
 t('비슷한 약: 같은 크기라도 제형이 같은 캡슐(12)이 필름정(9)보다 위', (() => { const l = M.similarLook(DB, DB.find((x) => x.s === '8')).map((x) => x.r.s); return l.indexOf('12') < l.indexOf('9'); })());
+t('조제 테스트용: 전문 캡슐(8)과 크기·제형·모양이 같은 일반약 → 12, 크기 차 +0.2mm', (() => { const l = M.sizeAlike(DB, DB.find((x) => x.s === '8'), { otcOnly: true }); return l[0].r.s === '12' && Math.abs(l[0].d.L - 0.2) < 1e-9; })());
+t('조제 테스트용: 제형 같게면 같은 크기 필름정(9)은 빠지고, 끄면 나온다', (() => { const r8 = DB.find((x) => x.s === '8'); return !M.sizeAlike(DB, r8).some((x) => x.r.s === '9') && M.sizeAlike(DB, r8, { sameForm: false }).some((x) => x.r.s === '9'); })());
+t('조제 테스트용: 크기만 넣어도 찾는다({L,W,form})', M.sizeAlike(DB, { L: 18.1, W: 6.5, form: '경질캡슐' }).slice(0, 2).every((x) => ['8', '12'].includes(x.r.s)));
+t('크기 오차 ±10%: 19.5mm로 18mm 약은 ±6%에선 빠지고 ±10%에선 나온다', !M.manualFilter({ size: { L: 19.5 } })(DB.find((x) => x.s === '9')) && M.manualFilter({ size: { L: 19.5, tol: 0.1 } })(DB.find((x) => x.s === '9')));
 t('비슷한 약: 자기 자신은 빠진다', !M.similarLook(DB, DB.find((x) => x.s === '8')).some((x) => x.r.s === '8'));
 t('같은 성분 약: 8 → 12(일반의약품)', M.sameIngredient(DB, DB.find((x) => x.s === '8')).map((x) => x.r.s).join() === '12');
 t('같은 성분 약: 주성분 정보 없으면 빈 목록', M.sameIngredient(DB, DB[0]).length === 0);

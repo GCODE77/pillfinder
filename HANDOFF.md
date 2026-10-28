@@ -1,7 +1,7 @@
 # 필파인더 — 세션 핸드오프
 
 - 최종 갱신: 2026-10-28
-- 현재 버전: **v1.9.0** — 배포됨: https://gcode77.github.io/pillfinder/ (저장소 GCODE77/pillfinder)
+- 현재 버전: **v1.9.1** — 배포됨: https://gcode77.github.io/pillfinder/ (저장소 GCODE77/pillfinder)
 - 저작권: © GLORY KIM
 - 형제 앱: `../약 계수하기`(필카운터, https://gcode77.github.io/pillcounter/) — 같은 디자인·배포 방식
 
@@ -128,3 +128,10 @@ node tests/make-demo.js              # 데모 데이터 다시 만들기
 - **데이터 빌드 추가**: 낱알 `EDI_CODE` → `ed`, 허가상세 `MAIN_ITEM_INGR` → `ig`(코드 묶음)·`in`(이름). 심평원 **약가기준정보**(`https://apis.data.go.kr/B551182/dgamtCrtrInfoService1.2/getDgamtList`, XML: mdsCd·mxCprc·unit·gnlNmCd·payTpNm·adtStaDd·spcGnlTpNm) → `pr`(상한가, 원)·`pu`(단위)·`pg`·`pn`(규격). **활용신청 필요**(자동승인, data.go.kr/data/15054445). 승인 전엔 경고만 남기고 건너뜀. meta에 `priced`, `priceAt`, `withIngr`.
 - 약가는 **건강보험 상한가**이며 실제 약국 판매가·본인부담과 다르다. 일반의약품은 대부분 비급여라 공식 가격이 없다(앱에 그렇게 표시).
 - 워크플로 수동 실행 `fresh=true`면 이번 주 캐시를 무시하고 새로 받는다(약가 승인 직후). 캐시 키 `mfds-data-v4-<주>`. 빌드 스크립트 `OUT_DIR` 환경변수로 출력 위치를 바꿀 수 있다.
+
+## 15. v1.9.1 조제 테스트용 대체약 (2026-10-28)
+
+- 목적: 전문의약품은 살 수 없으니 **조제·분포 시험**은 크기·제형·모양이 같은 일반의약품으로 한다. 색·각인은 상관없다.
+- 상세 화면 '비슷한 약 찾기'의 첫 탭(기본) **크기·제형·모양 (조제 테스트용)**: `M.sizeAlike(db, ref, {otcOnly, sameForm, sameShape})`. 장축·단축·두께 차를 허용오차 max(0.3mm, 5%)로 나눈 제곱합으로 점수를 매기고, 카드마다 "이 약과 차이 · 장축 −0.26 · 단축 −0.01 · 두께 +0.05mm"를 보여 준다. '제형 같게'·'모양 같게' 칩은 기본으로 켜져 있고, 끄면 다른 제형·모양도 감점해서 함께 보여 준다. ref는 약 한 개 또는 `{L, W, T, form, shape}`.
+- 약 검색 '크기 오차' 선택: ±6%(기본) / ±10%(대체약) / ±20%. `manualFilter`의 `size.tol`.
+- 실제 데이터: 실로딜서방캡슐(18×5.9×6.2) → 로포에프캅셀·헤모테인캡슐 등 차이 0.3mm 이내의 일반 경질캡슐. 노바스크정10(팔각형)은 같은 모양 일반약이 없어서 '모양 같게'를 끄면 나온다.

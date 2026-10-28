@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '1.9.1';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -119,7 +119,7 @@ function card(r, extra = {}) {
   return `<button class="card${extra.checked ? ' sel' : ''}" data-seq="${esc(r.s)}"${extra.key ? ` data-key="${esc(extra.key)}"` : ''}>
     ${preCard(extra)}<div class="img">${imgOf(r)}</div>
     <div class="body"><div class="name">${otcBadge(r)}${esc(r.n)}</div><div class="sub">${esc(r.e)}${r.cl ? ' · ' + esc(r.cl) : ''}</div>
-      <div class="feat">${feat.map((f) => `<span>${f.startsWith('<') ? f : esc(f)}</span>`).join('')}</div>${why ? `<div class="why">${why}</div>` : ''}</div>
+      <div class="feat">${feat.map((f) => `<span>${f.startsWith('<') ? f : esc(f)}</span>`).join('')}</div>${why ? `<div class="why">${why}</div>` : ''}${extra.note ? `<div class="why"><span class="hi">${esc(extra.note)}</span></div>` : ''}</div>
     ${extra.score !== undefined ? `<div class="score">${Math.round(extra.score * 100)}<small>일치</small></div>` : ''}
   </button>`;
 }
@@ -697,6 +697,7 @@ const filt = { shapes: [], colors: [], forms: [], formD: [], has: '', otc: '' };
 $('#fOtc').innerHTML = '<button class="chip" data-otc="일반">일반의약품만 (처방전 없이)</button><button class="chip" data-otc="전문">전문의약품만</button>';
 $('#fOtc').addEventListener('click', (e) => { const b = e.target.closest('[data-otc]'); if (!b) return; filt.otc = filt.otc === b.dataset.otc ? '' : b.dataset.otc; document.querySelectorAll('#fOtc .chip').forEach((c) => c.classList.toggle('on', c.dataset.otc === filt.otc)); runFilter(); });
 $('#fSort').addEventListener('change', runFilter);
+$('#fTol').addEventListener('change', runFilter);
 $('#fHas').innerHTML = '<button class="chip" data-has="has">각인 있음</button><button class="chip" data-has="none">각인 없음</button>';
 $('#fHas').addEventListener('click', (e) => { const b = e.target.closest('[data-has]'); if (!b) return; filt.has = filt.has === b.dataset.has ? '' : b.dataset.has; document.querySelectorAll('#fHas .chip').forEach((c) => c.classList.toggle('on', c.dataset.has === filt.has)); runFilter(); });
 $('#fFormD').innerHTML = Object.keys(M.FORM_DETAIL).map((s) => formTile(s, 'data-formd')).join('');
@@ -712,7 +713,7 @@ let fRes = [], fShown = 0, fT;
 for (const id of ['#q', '#fImprint', '#fL', '#fW', '#fT']) $(id).addEventListener('input', () => { clearTimeout(fT); fT = setTimeout(runFilter, 200); });
 $('#fSimilar').addEventListener('change', runFilter);
 $('#fReset').addEventListener('click', () => {
-  filt.shapes = []; filt.colors = []; filt.forms = []; filt.formD = []; filt.has = ''; filt.otc = ''; $('#fSort').value = '';
+  filt.shapes = []; filt.colors = []; filt.forms = []; filt.formD = []; filt.has = ''; filt.otc = ''; $('#fSort').value = ''; $('#fTol').value = '0.06';
   for (const id of ['#q', '#fImprint', '#fL', '#fW', '#fT']) $(id).value = '';
   document.querySelectorAll('#pgSearch .on').forEach((c) => c.classList.remove('on'));
   runFilter();
@@ -720,7 +721,7 @@ $('#fReset').addEventListener('click', () => {
 const numOf = (id) => { const v = parseFloat(String($(id).value).replace(',', '.')); return v > 0 ? v : 0; };
 function runFilter() {
   const qn = $('#q').value.trim(), imprint = $('#fImprint').value.trim();
-  const size = { L: numOf('#fL'), W: numOf('#fW'), T: numOf('#fT') };
+  const size = { L: numOf('#fL'), W: numOf('#fW'), T: numOf('#fT'), tol: Number($('#fTol').value) || 0.06 };
   $('#sumFormD').textContent = filt.formD.length ? '세부 제형 · ' + filt.formD.join(', ') : '세부 제형 (필름코팅·서방·장용…)';
   $('#sumShape').textContent = filt.shapes.length ? '모양 · ' + filt.shapes.join(', ') : '모양 (눌러서 고르기)';
   $('#sumColor').textContent = filt.colors.length ? '색 · ' + filt.colors.join(', ') : '색 (눌러서 고르기)';
@@ -788,8 +789,13 @@ async function showItem(seq) {
     <div class="simbox">
       <h2>비슷한 약 찾기</h2>
       <div class="bar">
-        <button class="chip on" data-sim="look">생김새가 비슷한 약</button>
+        <button class="chip on" data-sim="size">크기·제형·모양 (조제 테스트용)</button>
+        <button class="chip" data-sim="look">생김새(색 포함)</button>
         <button class="chip" data-sim="ingr">같은 성분 약</button>
+      </div>
+      <div class="bar" id="simSizeOpt">
+        <button class="chip on" id="simForm">제형 같게 (${esc(M.formGroup(r))})</button>
+        <button class="chip on" id="simShape">모양 같게 (${esc(r.sh || '기타')})</button>
       </div>
       <div class="bar">
         <button class="chip ${M.isOtc(r) ? '' : 'on'}" id="simOtc">처방전 없이 살 수 있는 일반의약품만</button>
@@ -825,10 +831,19 @@ async function showItem(seq) {
     toast('기억했습니다. 내 약에도 저장했어요');
   });
   // 비슷한 약: 생김새(크기·모양·색·제형) / 같은 성분, 일반의약품만, 싼 순
-  const sim = { mode: 'look', otc: !M.isOtc(r), sort: '' };
+  const sim = { mode: 'size', otc: !M.isOtc(r), sort: '', form: true, shape: true };
+  const mmd = (v) => { if (v === null) return ''; const x = Math.round(v * 100) / 100; return `${x > 0 ? '+' : x < 0 ? '−' : '±'}${Math.abs(x).toFixed(2)}`; };
   const drawSim = () => {
     let list, note;
-    if (sim.mode === 'look') {
+    $('#simSizeOpt').classList.toggle('hidden', sim.mode !== 'size');
+    if (sim.mode === 'size') {
+      list = M.sizeAlike(data.db, r, { otcOnly: sim.otc, sameForm: sim.form, sameShape: sim.shape, limit: 60 }).map((x) => ({
+        r: x.r, score: x.score,
+        note: `이 약과 차이 · 장축 ${mmd(x.d.L)}` + (x.d.W !== null ? ` · 단축 ${mmd(x.d.W)}` : '') + (x.d.T !== null ? ` · 두께 ${mmd(x.d.T)}` : r.T ? ' · 두께 자료 없음' : '') + 'mm',
+      }));
+      note = !r.L ? '이 약은 크기 자료가 없어 찾을 수 없습니다.'
+        : `기준: ${sizeTxt(r)} · 색·각인은 보지 않고 크기가 가까운 ${sim.otc ? '일반의약품' : '약'} 순서입니다. 조제·분포 시험용 대체약을 고를 때 쓰세요(복용 대체 아님).`;
+    } else if (sim.mode === 'look') {
       list = M.similarLook(data.db, r, { otcOnly: sim.otc, limit: 40 }).map((x) => ({ r: x.r, score: x.score }));
       note = `크기·모양·색·제형이 비슷한 ${sim.otc ? '일반의약품' : '약'}입니다. 생김새가 비슷하다고 효능이 같은 것은 아니에요.`;
     } else {
@@ -840,11 +855,12 @@ async function showItem(seq) {
     }
     if (sim.sort === 'price') list = list.slice().sort((a, b) => (a.r.pr ?? 1e12) - (b.r.pr ?? 1e12));
     $('#simNote').textContent = note;
-    $('#simList').innerHTML = list.length ? list.slice(0, 40).map((x, i) => card(x.r, { num: i + 1, score: x.score })).join('') : `<div class="empty-msg">${sim.otc ? '조건에 맞는 일반의약품이 없습니다. "일반의약품만"을 끄고 보세요.' : '비슷한 약이 없습니다.'}</div>`;
+    $('#simList').innerHTML = list.length ? list.slice(0, 40).map((x, i) => card(x.r, { num: i + 1, score: x.score, note: x.note })).join('') : `<div class="empty-msg">${sim.otc ? '조건에 맞는 일반의약품이 없습니다. "일반의약품만"을 끄고 보세요.' : '비슷한 약이 없습니다.'}</div>`;
   };
   $('#item').querySelectorAll('[data-sim]').forEach((b) => b.addEventListener('click', () => { sim.mode = b.dataset.sim; $('#item').querySelectorAll('[data-sim]').forEach((c) => c.classList.toggle('on', c === b)); drawSim(); }));
   $('#simOtc').addEventListener('click', (e) => { sim.otc = !sim.otc; e.currentTarget.classList.toggle('on', sim.otc); drawSim(); });
   $('#simSort').addEventListener('change', (e) => { sim.sort = e.target.value; drawSim(); });
+  for (const k of ['form', 'shape']) $('#sim' + k[0].toUpperCase() + k.slice(1)).addEventListener('click', (e) => { sim[k] = !sim[k]; e.currentTarget.classList.toggle('on', sim[k]); drawSim(); });
   setTimeout(drawSim, 0);
   $('#shareBtn').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(location.href); toast('링크를 복사했습니다'); } catch { toast(location.href, 4000); }

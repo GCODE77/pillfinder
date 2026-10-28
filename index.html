@@ -274,6 +274,9 @@
         <label>단축 (mm)<input class="text" id="fW" inputmode="decimal" placeholder="너비" autocomplete="off"></label>
         <label>두께 (mm)<input class="text" id="fT" inputmode="decimal" placeholder="두께" autocomplete="off"></label>
       </div>
+      <div class="panelrow"><span class="hint" style="font-weight:800">크기 오차</span>
+        <select class="text" id="fTol" style="width:auto;padding:6px 10px;font-size:14px"><option value="0.06">±6% (같은 약 찾기)</option><option value="0.1">±10% (조제 테스트용 대체약)</option><option value="0.2">±20% (넓게)</option></select>
+        <span class="hint">크기를 넣으면 가까운 순서로 나옵니다</span></div>
       <details open><summary>제형 — 캡슐인지 알약인지</summary><div class="tilegrid" id="fForms"></div></details>
       <details><summary><span id="sumFormD">세부 제형 (필름코팅·서방·장용…)</span></summary><div class="tilegrid" id="fFormD"></div></details>
       <details><summary><span id="sumShape">모양</span></summary><div class="tilegrid shapes" id="fShapes"></div></details>
