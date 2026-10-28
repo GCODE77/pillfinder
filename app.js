@@ -2,7 +2,7 @@
 import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -12,7 +12,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { toast('저장 공간이 부족합니다'); } },
 };
-const settings = Object.assign({ auto: true, share: true, coin: '24', ai: false, aiKey: '', aiModel: 'claude-opus-5-5' }, store.get('pf.settings', {}));
+const settings = Object.assign({ auto: true, share: true, cardGuide: true, coin: '24', ai: false, aiKey: '', aiModel: 'claude-opus-5-5' }, store.get('pf.settings', {}));
 const saveSettings = () => store.set('pf.settings', settings);
 let favs = store.get('pf.favs', []);
 let hist = store.get('pf.hist', []);
@@ -29,6 +29,12 @@ async function syncShared() {
   const list = await SH.download();
   if (!list) return;
   shared = { t: Date.now(), list }; learnedCache = null; store.set('pf.shared', shared);
+}
+
+// 기준 물체(동전 또는 카드)로 약 크기를 mm로 환산. 카드는 두 변(85.6×54mm)의 평균 배율을 쓴다
+function mmFrom(pill, ref) {
+  const u = ref.kind === 'card' ? (85.6 / ref.long + 53.98 / ref.short) / 2 : Number(settings.coin) / ref.long;
+  return { long: pill.long * u, short: pill.short * u };
 }
 
 function toast(msg, ms = 2400) {
@@ -228,12 +234,41 @@ function fit(el, w, h) {
   return { s, ox: (r.width - w * s) / 2, oy: (r.height - h * s) / 2, rw: r.width, rh: r.height };
 }
 
+// 촬영 가이드: 약은 동그라미, 카드는 직사각형 안에 두면 크기까지 잰다(확대 모드는 가운데 큰 원)
+let zoomMode = false;
+function drawGuides(ctx, f, vw, vh, res) {
+  if (!zoomMode && !settings.cardGuide) return;
+  const X = (u) => f.ox + u * vw * f.s, Y = (v) => f.oy + v * vh * f.s, S = vw * f.s;
+  ctx.save(); ctx.setLineDash([7, 6]); ctx.lineWidth = 1.5; ctx.textAlign = 'center'; ctx.font = '700 12px sans-serif';
+  const label = (txt, x, y, col) => { ctx.setLineDash([]); ctx.fillStyle = col; ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = 3; ctx.fillText(txt, x, y); ctx.shadowBlur = 0; ctx.setLineDash([7, 6]); };
+  if (zoomMode) {
+    const r = 0.36 * Math.min(vw, vh) * f.s;
+    ctx.strokeStyle = 'rgba(250,204,21,.75)'; ctx.beginPath(); ctx.arc(X(0.5), Y(0.5), r, 0, 7); ctx.stroke();
+    label('약을 크게 · 각인이 잘 보이게', X(0.5), Y(0.5) + r + 16, '#fde68a');
+  } else {
+    const land = vw >= vh;
+    const cw = land ? 0.42 : 0.74, chH = (cw * vw) / 1.586 / vh;                  // 카드 가로세로비 1.586
+    const cx0 = land ? 0.55 : 0.13, cy0 = land ? 0.5 - chH / 2 : 0.58;
+    const found = res && res.coin && res.coin.kind === 'card';
+    const col = found ? '#4ade80' : 'rgba(125,211,252,.85)';
+    ctx.strokeStyle = col; ctx.beginPath();
+    const rx = X(cx0), ry = Y(cy0), rw = cw * S, rh = chH * vh * f.s, rr = rw * 0.05;
+    ctx.moveTo(rx + rr, ry); ctx.arcTo(rx + rw, ry, rx + rw, ry + rh, rr); ctx.arcTo(rx + rw, ry + rh, rx, ry + rh, rr); ctx.arcTo(rx, ry + rh, rx, ry, rr); ctx.arcTo(rx, ry, rx + rw, ry, rr); ctx.closePath(); ctx.stroke();
+    label(found ? '카드 인식됨 ✓' : '카드(선택)', rx + rw / 2, ry + rh / 2 + 4, col);
+    const px = land ? 0.30 : 0.5, py = land ? 0.5 : 0.28, pr = (land ? 0.16 : 0.2) * S;
+    ctx.strokeStyle = 'rgba(250,204,21,.7)'; ctx.beginPath(); ctx.arc(X(px), Y(py), pr, 0, 7); ctx.stroke();
+    label('약', X(px), Y(py) + 4, '#fde68a');
+  }
+  ctx.restore();
+}
+
 function drawOverlay(res, sw, sh, srcW, srcH) {
   const r = ovl.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
   if (ovl.width !== Math.round(r.width * dpr)) { ovl.width = Math.round(r.width * dpr); ovl.height = Math.round(r.height * dpr); }
   const ctx = ovl.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, r.width, r.height);
+  if (live && srcW) drawGuides(ctx, fit(ovl, srcW, srcH), srcW, srcH, res);
   if (!res || !res.ok) return;
   const f = fit(ovl, srcW, srcH), k = srcW / sw;
   const draw = (o, color, width, dash) => {
@@ -261,8 +296,8 @@ function liveTags(res, srcW) {
   const p = res.pill, tags = [];
   tags.push(`<span class="pill-tag"><b>${esc(p.shapeTop)}</b> · ${esc(p.colorTop.join('/'))} · 비율 ${p.aspect.toFixed(2)}</span>`);
   if (res.coin) {
-    const u = Number(settings.coin) / res.coin.long, mmL = p.long * u, mmS = p.short * u;
-    tags.push(`<span class="pill-tag">동전 기준 <b>장 ${mmL.toFixed(1)} · 단 ${mmS.toFixed(1)}mm</b></span>`);
+    const m = mmFrom(p, res.coin);
+    tags.push(`<span class="pill-tag">${res.coin.kind === 'card' ? '카드' : '동전'} 기준 <b>장 ${m.long.toFixed(1)} · 단 ${m.short.toFixed(1)}mm</b></span>`);
   }
   if (p.cut) tags.push('<span class="pill-tag warn">약이 화면 밖으로 잘렸어요</span>');
   else if (p.contrast < 12) tags.push('<span class="pill-tag warn">바닥과 색이 비슷해요 — 다른 색 바닥에</span>');
@@ -384,7 +419,7 @@ function busy(on, text) { $('#busy').classList.toggle('on', !!on); if (text) $('
 
 // ---------- 식별 ----------
 // sides: 앞면/뒷면 사진마다 {thumb, res, reads, ai}
-let sides = [], obsEdit = null, pendingBack = false;
+let sides = [], obsEdit = null, pendingBack = false, pendingZoom = false, zoomSide = null;
 
 function pillThumb(canvas, o, size = 360) {
   const m = Math.max(o.long, o.short) * 0.62;
@@ -413,6 +448,12 @@ async function identify(canvas) {
     if (!res.ok || !res.pill) {
       busy(false);
       toast(res.reason === 'timeout' ? '분석이 너무 오래 걸립니다. 다시 찍어 주세요' : '약을 찾지 못했어요. 단색 바닥에 한 알만 두고 다시 찍어 주세요', 3800);
+      if (pendingZoom) { // 확대 촬영이 실패해도 앞면 결과는 그대로 두고 다시 비춰 보게 한다
+        pendingZoom = false; zoomMode = false; autoHold = true; holdRef = null;
+        showStill(null); if (stream) startLive();
+        toast('약 전체가 화면 안에 들어오게 가까이 비춰 주세요', 3500);
+        return;
+      }
       if (!pendingBack) resetCam();
       return;
     }
@@ -438,19 +479,20 @@ async function identify(canvas) {
     const mini = document.createElement('canvas'); mini.width = mini.height = 96;
     mini.getContext('2d').drawImage(thumb, 0, 0, 96, 96);
     const side = { thumb: thumb.toDataURL('image/jpeg', 0.8), mini: mini.toDataURL('image/jpeg', 0.7), res: stripRes(res), reads, ai };
-    if (pendingBack && sides.length) sides[1] = side; else sides = [side];
-    pendingBack = false;
+    const zoomShot = pendingZoom;
+    if (pendingZoom) { zoomSide = side; pendingZoom = false; zoomMode = false; }
+    else { if (pendingBack && sides.length) sides[1] = side; else { sides = [side]; zoomSide = null; } pendingBack = false; }
     obsEdit = null;
     busy(false);
-    renderResult(true);
+    renderResult(true, zoomShot);
   } finally {
     capturing = false;
   }
 }
-const stripRes = (r) => ({ pill: r.pill, coin: r.coin && { long: r.coin.long, short: r.coin.short }, bg: r.bg });
+const stripRes = (r) => ({ pill: r.pill, coin: r.coin && { long: r.coin.long, short: r.coin.short, kind: r.coin.kind }, bg: r.bg });
 
 function resetCam() {
-  sides = []; obsEdit = null; seed = null; pendingBack = false;
+  sides = []; zoomSide = null; obsEdit = null; seed = null; pendingBack = false; pendingZoom = false; zoomMode = false;
   $('#result').classList.add('hidden'); $('#resultIntro').classList.remove('hidden');
   showStill(null);
   autoHold = true; holdRef = null; frameRetry = 0;
@@ -470,11 +512,8 @@ function autoObs() {
   let mm = null;
   const withCoin = sides.filter((s) => s.res.coin);
   if (withCoin.length) {
-    const coin = Number(settings.coin);
-    mm = {
-      long: withCoin.reduce((a, s) => a + (s.res.pill.long / s.res.coin.long) * coin, 0) / withCoin.length,
-      short: withCoin.reduce((a, s) => a + (s.res.pill.short / s.res.coin.long) * coin, 0) / withCoin.length,
-    };
+    const ms = withCoin.map((s) => mmFrom(s.res.pill, s.res.coin));
+    mm = { long: ms.reduce((a, m) => a + m.long, 0) / ms.length, short: ms.reduce((a, m) => a + m.short, 0) / ms.length };
   }
   const imprints = [];
   sides.forEach((s, i) => {
@@ -487,6 +526,7 @@ function autoObs() {
       if (i === 0 && s.ai.colors && s.ai.colors.length) colors = s.ai.colors.slice(0, 2).map((c, j) => ({ probs: mix(colors[j] ? colors[j].probs : {}, c) }));
     }
   });
+  if (zoomSide) for (const r of zoomSide.reads) imprints.push({ ...r, side: 0, how: '확대' });
   // 면 특징 → 확률: 분할선 점수 7 근처, 각인 변화량 1.1 근처가 경계(실제 사진·식약처 사진 600면으로 맞춤)
   const sig = (x) => 1 / (1 + Math.exp(-x));
   const faces = ps.map((p) => ({
@@ -522,13 +562,14 @@ function fillSelect(sel, items, value, autoLabel) {
   sel.innerHTML = `<option value="">${autoLabel}</option>` + items.map((k) => `<option value="${k}" ${k === value ? 'selected' : ''}>${k}</option>`).join('');
 }
 
-function renderResult(fresh) {
+function renderResult(fresh, noHistory) {
   $('#resultIntro').classList.add('hidden');
   $('#result').classList.remove('hidden');
   const o = autoObs();
   const p0 = sides[0].res.pill;
   $('#thumbs').innerHTML = sides.map((s, i) => `<div style="text-align:center"><img src="${s.thumb}" alt=""><div class="hint">${i ? '뒷면' : '앞면'}</div></div>`).join('') +
-    `<div class="hint" style="flex:1;margin-left:4px">영상 분석: <b>${esc(p0.shapeTop)}</b> ${Math.round(p0.shape[p0.shapeTop] * 100)}% · ${esc(p0.colorTop.join('/'))} · 비율 ${o.aspect.toFixed(2)}${o.mm ? ` · 동전 기준 ${o.mm.long.toFixed(1)}×${o.mm.short.toFixed(1)}mm` : ''}${sides.some((s) => s.ai) ? '<br>AI 판독 포함' : ''}</div>`;
+    (zoomSide ? `<div style="text-align:center"><img src="${zoomSide.thumb}" alt=""><div class="hint">확대</div></div>` : '') +
+    `<div class="hint" style="flex:1;margin-left:4px">영상 분석: <b>${esc(p0.shapeTop)}</b> ${Math.round(p0.shape[p0.shapeTop] * 100)}% · ${esc(p0.colorTop.join('/'))} · 비율 ${o.aspect.toFixed(2)}${o.mm ? ` · ${sides.find((s) => s.res.coin) && sides.find((s) => s.res.coin).res.coin.kind === 'card' ? '카드' : '동전'} 기준 ${o.mm.long.toFixed(1)}×${o.mm.short.toFixed(1)}mm` : ''}${sides.some((s) => s.ai) ? '<br>AI 판독 포함' : ''}</div>`;
   if (fresh) {
     const topShape = Object.keys(o.shape).reduce((a, b) => (o.shape[a] >= o.shape[b] ? a : b));
     fillSelect($('#oShape'), V.SHAPES, '', `자동 (${topShape})`);
@@ -543,14 +584,14 @@ function renderResult(fresh) {
     $('#oImprint').value = [front && front.text, back && back.text].filter(Boolean).join(' ');
     if (!sure.length) obsEdit = { imprint: '' }; // 엉터리 판독이 순위를 흔들지 않게
     $('#reads').innerHTML = best.length
-      ? best.map((r) => `<button class="chip" data-read="${esc(r.text)}">${esc(r.text)} <span class="hint">${r.how === 'AI' ? 'AI' : Math.round(r.conf * 100) + '%'}</span></button>`).join('')
+      ? best.map((r) => `<button class="chip" data-read="${esc(r.text)}">${esc(r.text)} <span class="hint">${r.how === 'AI' ? 'AI' : (r.how === '확대' ? '확대 ' : '') + Math.round(r.conf * 100) + '%'}</span></button>`).join('')
       : '';
     if (!sure.length) $('#reads').insertAdjacentHTML('afterbegin', '<div class="hint" style="width:100%;color:#fde68a">각인을 확실히 읽지 못했습니다. 약에 새겨진 글자를 위 칸에 넣으면 훨씬 정확해집니다(예: PAC).' + (best.length ? ' 비슷하게 읽힌 글자:' : '') + '</div>');
     $('#obsNote').textContent = sides[0].ai && sides[0].ai.note ? 'AI 메모: ' + sides[0].ai.note : '';
     $('#btnBack').textContent = sides.length > 1 ? '뒷면 다시 찍기' : '뒷면도 찍기';
   }
   rerank();
-  if (fresh) saveHistory();
+  if (fresh && !noHistory) saveHistory();
 }
 
 function rerank() {
@@ -584,8 +625,16 @@ let editT;
 ['#oImprint', '#oSize'].forEach((s) => $(s).addEventListener('input', () => { clearTimeout(editT); editT = setTimeout(editObs, 250); }));
 $('#reads').addEventListener('click', (e) => { const c = e.target.closest('[data-read]'); if (c) { $('#oImprint').value = c.dataset.read; editObs(); } });
 $('#btnRetake').addEventListener('click', resetCam);
+$('#btnZoom').addEventListener('click', () => {
+  pendingZoom = true; pendingBack = false; zoomMode = true; seed = null;
+  toast('각인이 보이는 면을 크게 비춰 주세요');
+  showStill(null);
+  autoHold = true; holdRef = null; frameRetry = 0;
+  window.scrollTo({ top: 0 });
+  if (stream) startLive(); else if (store.get('pf.camOk', false)) camStart(); else $('#file').click();
+});
 $('#btnBack').addEventListener('click', () => {
-  pendingBack = true; seed = null;
+  pendingBack = true; pendingZoom = false; zoomMode = false; seed = null;
   toast('약을 뒤집어서 비춰 주세요');
   showStill(null);
   autoHold = true; holdRef = null; frameRetry = 0;
@@ -794,6 +843,9 @@ $('#pgMine').addEventListener('click', (e) => {
   showMine();
 });
 $('#sCoin').addEventListener('change', (e) => { settings.coin = e.target.value; saveSettings(); });
+$('#sCardGuide').addEventListener('change', (e) => { settings.cardGuide = e.target.checked; saveSettings(); syncGuide(); });
+function syncGuide() { $('#guideBox').style.display = settings.cardGuide ? 'none' : ''; $('#sCardGuide').checked = settings.cardGuide; }
+syncGuide();
 $('#sShare').addEventListener('change', (e) => { settings.share = e.target.checked; saveSettings(); if (settings.share) { shared.t = 0; syncShared(); } });
 $('#sAi').addEventListener('change', (e) => { settings.ai = e.target.checked; saveSettings(); $('#aiBox').classList.toggle('hidden', !settings.ai); });
 $('#sKey').addEventListener('change', (e) => { settings.aiKey = e.target.value.trim(); saveSettings(); toast('키를 이 기기에 저장했습니다'); });

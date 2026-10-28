@@ -398,6 +398,18 @@
 
     // 4) 대상 고르기: 터치한 곳 > 화면 가운데 큰 것. 사진 밖으로 잘린 것은 감점.
     const diag = Math.hypot(W, H);
+    // 경계 선명도: 약은 둘레가 또렷하고, 빛 반사 얼룩·그림자는 경계가 번져 있다(밝기 기울기 평균)
+    const sharpOf = (c) => {
+      const ct = traceContour(lab, c.id, W, H, c.start), st = Math.max(1, Math.floor(ct.length / 160));
+      let s = 0, k = 0;
+      for (let i = 0; i < ct.length; i += st) {
+        const [x, y] = ct[i];
+        if (x < 3 || y < 3 || x >= W - 3 || y >= H - 3) continue;
+        const j = y * W + x;
+        s += (Math.abs(L[j + 3] - L[j - 3]) + Math.abs(L[j + 3 * W] - L[j - 3 * W])) / 6; k++;
+      }
+      return k ? s / k : 0;
+    };
     const scoreOf = (c) => {
       const dc = Math.hypot(c.cx - W / 2, c.cy - H / 2) / diag;
       // 가장자리에 걸친 것(포장지·손가락·물건)은 크게 감점, 많이 걸칠수록 더
@@ -411,7 +423,8 @@
       // 가까이 찍으면 약이 화면의 절반을 넘기도 한다. 다만 가장자리에 걸치면서 큰 것은 바닥·손일 가능성
       const sizeOk = c.area > n * 0.7 || (c.area > n * 0.3 && c.edge > 0) ? 0.2 : 1;
       const fill = c.area / (bw * bh);                         // 속이 빈 테두리·선 모양 제외
-      return c.area * (1 - dc) * cut * shapeOk * sizeOk * (fill < 0.45 ? 0.3 : 1);
+      const sharp = Math.max(0.1, Math.min(1, (sharpOf(c) - 2) / 2));   // 번진 경계(반사 얼룩·그림자)는 크게 감점
+      return c.area * (1 - dc) * cut * shapeOk * sizeOk * sharp * (fill < 0.45 ? 0.3 : 1);
     };
     let order = cands.slice().sort((a, b) => scoreOf(b) - scoreOf(a));
     if (opts.seed) {
@@ -422,11 +435,21 @@
     }
     order = order.slice(0, 4);
 
+    if (!usedEdge && opts.tighten !== false) for (const c of order) tighten(c, lab, dist, L, bgMain.c[0], W, H, th);
     const objects = order.map((c) => describe(c, lab, W, H, L, A, B, bgMain.c, opts));
 
     // 5) 기준 동전: 약보다 크고, 동그랗고, 은색/구리색인 것
     let coin = null, pill = objects[0];
+    // 카드(신용·교통카드 85.6×54mm): 약보다 훨씬 크고, 모서리 둥근 직사각형이고, 가로세로비 1.58 안팎. 동전보다 우선(두 변으로 크기를 재서 더 정확)
     if (opts.coin !== false && objects.length >= 2) {
+      const isCardLike = (o) => !o.cut && o.aspect > 1.45 && o.aspect < 1.75 && o.area / (o.long * o.short) > 0.9 && o.short > 0 && o.long / Math.max(1, Math.sqrt(W * H)) > 0.2;
+      const cardC = objects.filter(isCardLike).sort((x, y) => y.area - x.area)[0];
+      if (cardC) {
+        const p = objects.filter((o) => o !== cardC).sort((x, y) => y.area - x.area)[0];
+        if (p && cardC.area > p.area * 2.5 && !p.cut) { coin = Object.assign(cardC, { kind: 'card', mmLong: 85.6, mmShort: 53.98 }); pill = opts.seed ? (objects[0] === cardC ? p : objects[0]) : p; }
+      }
+    }
+    if (!coin && opts.coin !== false && objects.length >= 2) {
       // 동전: 둥글고, 금속색(은색은 흰 약보다 어둡다, 구리색 10원은 갈색 계열)
       const isCoinLike = (o) => o.aspect < 1.08 && o.shape.원형 > 0.45 && o.chroma < 26 && o.colors[0].lab[0] < 80;
       const cc = objects.filter(isCoinLike).sort((a, b) => b.area - a.area)[0];
@@ -457,6 +480,52 @@
       contrast: pill ? pill.contrast : 0,
       crop,
     };
+  }
+
+  // 경계 조이기: 문턱(th)이 낮으면 약 둘레의 그림자·반사 조각이 같이 잡힌다.
+  // 약 몸통이 바닥과 얼마나 다른지(하위 30% 값)의 절반이 진짜 경계이므로, 그보다 낮은 문턱으로 잡힌 곳만 다시 다듬는다.
+  let TIGHT = 0.55;
+  const SGN_MARGIN = -6; // 바닥보다 6 이상 어두운 조각만 그림자로 본다(약 자체의 그늘진 아랫면은 남김)
+  function tighten(c, lab, dist, L, bgL, W, H, th) {
+    const vals = [], dls = [];
+    for (let y = c.y0; y <= c.y1; y++) for (let x = c.x0; x <= c.x1; x++) if (lab[y * W + x] === c.id) { vals.push(dist[y * W + x]); dls.push(L[y * W + x] - bgL); }
+    if (vals.length < 80) return;
+    vals.sort((a, b) => a - b); dls.sort((a, b) => a - b);
+    if (vals[Math.floor(vals.length / 2)] > 32) return; // 대비가 큰 약은 경계가 이미 뚜렷하다(모서리를 깎지 않게 건너뜀)
+    const t2 = TIGHT * vals[Math.floor(vals.length * 0.3)];
+    // 몸통이 바닥보다 확실히 밝으면(어두우면) 바닥보다 어두운(밝은) 조각은 그림자·반사이므로 뗀다
+    const medDL = dls[Math.floor(dls.length / 2)];
+    const sgn = Math.abs(medDL) > 8 ? Math.sign(medDL) : 0;
+    const useDist = t2 > th * 1.2;
+    if (!useDist && !sgn) return;
+    const pad = 2, bw = c.x1 - c.x0 + 1 + pad * 2, bh = c.y1 - c.y0 + 1 + pad * 2;
+    let m = new Uint8Array(bw * bh);
+    for (let y = c.y0; y <= c.y1; y++) for (let x = c.x0; x <= c.x1; x++) {
+      const i = y * W + x;
+      if (lab[i] === c.id && (!useDist || dist[i] > t2) && (!sgn || sgn * (L[i] - bgL) > SGN_MARGIN)) m[(y - c.y0 + pad) * bw + (x - c.x0 + pad)] = 1;
+    }
+    const k = Math.max(1, Math.round(Math.sqrt(c.area) / 60));
+    m = rep(dilate, rep(erode, m, bw, bh, k), bw, bh, k);
+    m = rep(erode, rep(dilate, m, bw, bh, k * 2), bw, bh, k * 2);
+    m = fillHoles(m, bw, bh);
+    const { lab: l2, comps } = label(m, bw, bh);
+    const big = comps.sort((a, b) => b.area - a.area)[0];
+    if (!big || big.area < c.area * 0.55) return; // 너무 많이 깎이면 원래대로
+    for (let y = c.y0; y <= c.y1; y++) for (let x = c.x0; x <= c.x1; x++) {
+      const i = y * W + x;
+      if (lab[i] === c.id) lab[i] = 0;
+    }
+    let area = 0, sx = 0, sy = 0, x0 = W, y0 = H, x1 = 0, y1 = 0, edge = 0, start = -1;
+    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
+      if (l2[y * bw + x] !== big.id) continue;
+      const X = x + c.x0 - pad, Y = y + c.y0 - pad;
+      lab[Y * W + X] = c.id;
+      if (start < 0) start = Y * W + X;
+      area++; sx += X; sy += Y;
+      if (X < x0) x0 = X; if (X > x1) x1 = X; if (Y < y0) y0 = Y; if (Y > y1) y1 = Y;
+      if (X === 0 || Y === 0 || X === W - 1 || Y === H - 1) edge++;
+    }
+    Object.assign(c, { area, sx, sy, cx: sx / area, cy: sy / area, x0, y0, x1, y1, edge, start });
   }
 
   // 덩어리에 가늘게 붙은 것(그림자 꼬리, 손금, 바닥 무늬)을 열림 연산으로 떼고 가장 큰 몸통만 남긴다

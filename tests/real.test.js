@@ -8,8 +8,9 @@ const load = (f) => {
   const w = raw.readUInt32LE(0), h = raw.readUInt32LE(4);
   return { width: w, height: h, data: new Uint8ClampedArray(raw.buffer, raw.byteOffset + 8, w * h * 4) };
 };
-// [파일, 터치 위치(없으면 자동), 기대 모양, 기대 색]  — 사용자가 알려 준 정답: 모두 흰색 원형
+// [파일, 터치 위치(없으면 자동), 기대 모양, 기대 색]  — 사용자가 알려 준 정답: 원형 흰색 + 캡슐(식약처 분류 장방형, 그림자·빛반사가 있는 사진)
 const CASES = [
+  ['capsule.png', null, '장방형', '하양'], ['capsule-320.png', null, '장방형', '하양'],
   ['pac-palm.png', null, '원형', '하양'], ['pac-full.png', null, '원형', '하양'],
   ['kla.png', null, '원형', '하양'], ['plain.png', null, '원형', '하양'],
   ['three.png', { x: 0.35, y: 0.27 }, '원형', '하양'], ['three.png', { x: 0.71, y: 0.48 }, '원형', '하양'], ['three.png', { x: 0.34, y: 0.78 }, '원형', '하양'],

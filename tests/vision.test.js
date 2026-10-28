@@ -62,6 +62,25 @@ for (const [name, type, lr, sr, color, expShape, expColor, color2] of CASES) {
   rows.push(`${ok ? 'OK  ' : 'FAIL'} 동전 기준 크기      → 동전 ${r.coin ? '찾음' : '못 찾음'}, 약 장축 ${mm.toFixed(2)}mm (기대 11)`);
 }
 
+// 카드 기준 크기: 신용카드(85.6×54mm) 옆에 장축 11mm 약 — 카드를 기울여도, 약이 장방형이어도
+for (const [name, cardAng, pillType] of [['카드 반듯', 0, 'oblong'], ['카드 15도 기울임', 0.26, 'oblong'], ['카드 옆 원형 약', 0.1, 'circle']]) {
+  total++;
+  const pxPerMm = 3.4;
+  const img = make(640, 480, {
+    bg: [46, 48, 54],
+    objs: [
+      { type: 'oblong', cx: 190, cy: 240, long: 85.6 * pxPerMm, short: 53.98 * pxPerMm, angle: cardAng, color: [150, 70, 70] },
+      { type: pillType, cx: 480, cy: 250, long: 11 * pxPerMm, short: (pillType === 'circle' ? 11 : 6) * pxPerMm, angle: 0.4, color: WHITE },
+    ],
+  });
+  const r = V.analyze(img, {});
+  let mm = 0, kind = '-';
+  if (r.coin) { kind = r.coin.kind || 'coin'; const u = r.coin.kind === 'card' ? (85.6 / r.coin.long + 53.98 / r.coin.short) / 2 : 24 / r.coin.long; mm = r.pill.long * u; }
+  const ok = kind === 'card' && Math.abs(mm - 11) < 0.8;
+  if (!ok) fail++;
+  rows.push(`${ok ? 'OK  ' : 'FAIL'} ${name.padEnd(14)} → 기준 ${kind}, 약 장축 ${mm.toFixed(2)}mm (기대 11)`);
+}
+
 // 빈 바닥: 아무것도 찾으면 안 됨
 {
   total++;

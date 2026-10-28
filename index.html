@@ -204,7 +204,10 @@
           <li><b>단색 바닥</b>에 한 알만 두고 위에서 찍으세요. 흰 약은 어두운 바닥, 어두운 약은 밝은 바닥이 좋습니다.</li>
           <li>거리가 달라도 됩니다. 모양·색·<b>장단축 비율</b>·각인으로 찾습니다.</li>
           <li><b>동전(기본 100원)</b>을 옆에 두면 실제 크기(mm)까지 재서 더 정확해집니다.</li>
+          <li><b>카드(신용·교통카드)</b>를 옆 네모 칸에 두면 약의 <b>실제 크기(mm)</b>까지 잽니다. 동전 대신 써도 됩니다.</li>
+          <li>결과에서 <b>각인 확대 찍기</b>로 글자 쪽을 가까이 한 장 더 찍으면 각인을 더 잘 읽고, 앞 사진과 합쳐서 찾습니다.</li>
           <li>약이 여러 개면 찾을 약을 <b>터치</b>하세요.</li>
+          <li><label><input type="checkbox" id="sCardGuide" checked> 카메라 화면에 카드 가이드 표시</label></li>
         </ul></details>
       </div>
       <div id="resultPane">
@@ -225,6 +228,7 @@
               <input class="text" id="oImprint" placeholder="읽은 글자가 없으면 직접 입력" autocapitalize="characters" autocomplete="off"></div>
             <div class="reads" id="reads"></div>
             <div class="row" style="margin-top:10px">
+              <button class="secondary" id="btnZoom">각인 확대 찍기</button>
               <button class="secondary" id="btnBack">뒷면도 찍기</button>
               <button class="ghost" id="btnRetake">새로 찍기</button>
             </div>
