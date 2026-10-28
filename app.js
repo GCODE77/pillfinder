@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.11.1';
+const APP_VERSION = '1.11.2';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -908,7 +908,7 @@ async function showItem(seq) {
   if (!d) { doc.innerHTML = '<div class="hint" style="padding:14px 0">이 약의 효능·용법 정보가 데이터에 없습니다. 아래 원문 링크에서 확인하세요.</div>'; return; }
   if (d.ingr) { const row = $('#ingrRow'); row.classList.remove('hidden'); row.querySelector('td').textContent = d.ingr; }
   const sec = [['efcy', '효능·효과'], ['use', '용법·용량'], ['warn', '이 약을 쓰기 전 꼭 알아야 할 것'], ['atpn', '주의사항'], ['intrc', '같이 먹으면 안 되는 약·음식'], ['se', '부작용'], ['keep', '보관 방법'], ['keep2', '저장 방법'], ['valid', '사용 기한']];
-  doc.innerHTML = sec.filter(([k]) => d[k]).map(([k, t], i) => `<details ${i < 2 ? 'open' : ''}><summary>${t}</summary><div class="txt">${esc(d[k])}</div></details>`).join('') +
+  doc.innerHTML = sec.filter(([k]) => d[k]).map(([k, t]) => `<details><summary>${t}</summary><div class="txt">${esc(d[k])}</div></details>`).join('') +
     `<div class="hint" style="padding:10px 0">출처: 식약처 ${esc(d.src)}</div>`;
 }
 
