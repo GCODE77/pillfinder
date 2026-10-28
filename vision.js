@@ -59,8 +59,15 @@
   }
 
   // 색 분류 확률. 밝기 차는 조명 탓이 커서 가볍게, 색상·채도 차는 무겁게 본다.
-  function colorProbs(lab) {
-    const [L, a, b] = lab;
+  function colorProbs(lab0) {
+    let [L, a, b] = lab0;
+    // 밝고 채도가 낮은 약은 폰 자동 화이트밸런스·차갑거나 따뜻한 조명 때문에 흰색이 푸르거나 누렇게 찍히기 쉽다.
+    // 채도가 낮을수록(진짜 하늘색·연노랑 약은 채도가 높다) 색 쏠림으로 보고 중립 쪽으로 당긴다. 푸른/초록 쏠림이 더 흔해서 더 세게
+    if (L > 78) {
+      const C0 = Math.hypot(a, b), k = (b < 0 || a < 0) ? 0.6 : 0.4;
+      const s = 1 - k * Math.exp(-((C0 / 18) ** 2));
+      a *= s; b *= s;
+    }
     const best = {};
     // 무채색(하양·회색·검정)은 밝기로만 갈리므로 채도가 낮을수록 밝기 차를 무겁게 본다
     const wL = 0.3 + 0.7 * Math.exp(-Math.hypot(a, b) / 10);

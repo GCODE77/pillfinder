@@ -2,7 +2,7 @@
 import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 
-const APP_VERSION = '1.7.1';
+const APP_VERSION = '1.7.2';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
