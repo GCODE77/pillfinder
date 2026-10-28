@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.10.0';
+const APP_VERSION = '1.10.1';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -118,14 +118,15 @@ function renderTray() {
   document.querySelectorAll('[data-cmp]').forEach((b) => { const on = cmp.includes(b.dataset.cmp); b.classList.toggle('on', on); b.textContent = on ? '비교 ✓' : '비교 +'; });
   tray.classList.toggle('on', cmp.length > 0 && page !== 'cam' && page !== 'cmp');
   const name = (s) => { const r = data.bySeq && data.bySeq.get(s); return r ? r.n.replace(/\(.*$/, '') : s; };
-  tray.innerHTML = `<div class="slots"><span>① ${esc(name(cmp[0] || ''))}</span><span>${cmp[1] ? '② ' + esc(name(cmp[1])) : '② 비교할 약을 하나 더 고르세요'}</span></div>
+  const NUM = ['①', '②', '③'];
+  tray.innerHTML = `<div class="slots">${cmp.length ? cmp.map((s, i) => `<span>${NUM[i]} ${esc(name(s))}</span>`).join('') : ''}${cmp.length < 2 ? '<span>비교할 약을 하나 더 고르세요</span>' : cmp.length < 3 ? '<span style="color:var(--dim)">하나 더 담으면 3개까지 비교</span>' : ''}</div>
     <button class="primary" id="cmpGo" ${cmp.length < 2 ? 'disabled' : ''}>비교하기</button><button class="ghost" id="cmpClr" aria-label="비교 목록 비우기">비우기</button>`;
-  $('#cmpGo').onclick = () => { location.hash = `#/cmp/${encodeURIComponent(cmp[0])}/${encodeURIComponent(cmp[1])}`; };
+  $('#cmpGo').onclick = () => { location.hash = '#/cmp/' + cmp.map(encodeURIComponent).join('/'); };
   $('#cmpClr').onclick = () => { cmp = []; renderTray(); };
 }
 function toggleCmp(seq) {
   const i = cmp.indexOf(seq);
-  if (i >= 0) cmp.splice(i, 1); else { cmp.push(seq); if (cmp.length > 2) cmp.shift(); }
+  if (i >= 0) cmp.splice(i, 1); else { cmp.push(seq); if (cmp.length > 3) cmp.shift(); }
   renderTray();
 }
 
@@ -155,7 +156,7 @@ document.addEventListener('click', (e) => {
 // ---------- 화면 이동 ----------
 const PAGES = { cam: '#pgCam', search: '#pgSearch', item: '#pgItem', cmp: '#pgCmp', mine: '#pgMine' };
 function route() {
-  const [, page = 'cam', arg, arg2] = (location.hash || '#/cam').split('/');
+  const [, page = 'cam', arg, arg2, arg3] = (location.hash || '#/cam').split('/');
   if (page === 'shape') { location.replace('#/search'); return; } // 예전 '모양으로' 주소
   const key = PAGES[page] ? page : 'cam';
   if (key !== 'item') document.title = '필파인더 — 찍으면 무슨 약인지';
@@ -164,7 +165,7 @@ function route() {
   if (key === 'cam') camEnter(); else camLeave();
   if (key === 'search') { runFilter(); if (!matchMedia('(pointer:coarse)').matches) setTimeout(() => $('#q').focus(), 50); }
   if (key === 'item') showItem(decodeURIComponent(arg || ''));
-  if (key === 'cmp') showCmp(decodeURIComponent(arg || ''), decodeURIComponent(arg2 || ''));
+  if (key === 'cmp') showCmp([arg, arg2, arg3].filter(Boolean).map(decodeURIComponent));
   renderTray();
   if (key === 'mine') showMine();
   window.scrollTo(0, 0);
@@ -930,12 +931,12 @@ function mineBar(l) {
 }
 // 실제 크기(mm) 비율로 겹쳐 그린 윤곽 — 모양은 대략적인 표현
 function overlaySvg(rs) {
-  const cols = ['#facc15', '#22d3ee'];
+  const cols = ['#facc15', '#22d3ee', '#f472b6'];
   const dim = rs.map((r) => ({ L: Math.max(r.L || 0, r.W || 0), W: Math.min(r.L || 0, r.W || r.L || 0), sh: r.sh || '' }));
   const maxL = Math.max(...dim.map((d) => d.L), 1), maxW = Math.max(...dim.map((d) => d.W), 1);
   const pad = 4, vw = maxL + pad * 2, vh = maxW + pad * 2 + 5, cx = vw / 2, cy = (maxW + pad * 2) / 2;
   const shape = (d, i) => {
-    const a = `fill="${cols[i]}" fill-opacity=".18" stroke="${cols[i]}" stroke-width="${Math.max(0.25, maxL / 90)}" ${i ? 'stroke-dasharray="1.2 0.8"' : ''}`;
+    const a = `fill="${cols[i]}" fill-opacity=".18" stroke="${cols[i]}" stroke-width="${Math.max(0.25, maxL / 90)}" ${i === 1 ? 'stroke-dasharray="1.2 0.8"' : i === 2 ? 'stroke-dasharray="3 1"' : ''}`;
     if (!d.L) return '';
     if (/원형/.test(d.sh) && !/타원|반원/.test(d.sh)) return `<circle cx="${cx}" cy="${cy}" r="${d.L / 2}" ${a}/>`;
     if (/타원/.test(d.sh)) return `<ellipse cx="${cx}" cy="${cy}" rx="${d.L / 2}" ry="${d.W / 2}" ${a}/>`;
@@ -945,12 +946,14 @@ function overlaySvg(rs) {
   const bx = cx - 2.5, by = maxW + pad * 2 + 1.5, fs = Math.max(1.6, maxL / 12);
   return `<svg viewBox="0 0 ${vw} ${vh}" aria-label="두 약의 실제 크기 비교"><line x1="${bx}" y1="${by}" x2="${bx + 5}" y2="${by}" stroke="#94a3b8" stroke-width="${maxL / 120}"/><text x="${cx + 3.5}" y="${by + fs * 0.35}" font-size="${fs}" fill="#94a3b8" font-family="Pretendard,sans-serif">5mm</text>${dim.map(shape).join('')}</svg>`;
 }
-function showCmp(a, b) {
-  const box = $('#cmp'), A = data.bySeq && data.bySeq.get(a), B = data.bySeq && data.bySeq.get(b);
+function showCmp(seqs) {
+  const box = $('#cmp'), rs = seqs.map((s) => data.bySeq && data.bySeq.get(s));
   document.title = '약 비교 — 필파인더';
-  if (!A || !B) { box.innerHTML = `<div class="empty-msg">${data.ready ? '비교할 약을 찾을 수 없습니다. 약 카드의 "비교 +"로 두 개를 고르세요.' : '불러오는 중…'}</div>`; return; }
+  if (rs.length < 2 || rs.some((r) => !r)) { box.innerHTML = `<div class="empty-msg">${data.ready ? '비교할 약을 찾을 수 없습니다. 약 카드의 "비교 +"로 2~3개를 고르세요.' : '불러오는 중…'}</div>`; return; }
+  const n = rs.length, NUM = ['①', '②', '③'], COL = ['#facc15', '#22d3ee', '#f472b6'];
+  box.style.setProperty('--n', n);
   const mm = (v) => (v ? `${v}mm` : '');
-  const dd = (x, y) => { if (!x || !y) return ''; const d = Math.round((y - x) * 100) / 100; return d ? `<small>${d > 0 ? '+' : '−'}${Math.abs(d)}mm</small>` : '<small style="color:#86efac">같음</small>'; };
+  const dd = (x, y) => { if (!x || !y) return ''; const d = Math.round((y - x) * 100) / 100; return d ? `<small>① 대비 ${d > 0 ? '+' : '−'}${Math.abs(d)}mm</small>` : '<small style="color:#86efac">① 과 같음</small>'; };
   const rows = [
     ['구분', (r) => r.o], ['제형', (r) => r.f], ['모양', (r) => r.sh], ['색', (r) => M.dbColors(r).join(', ')],
     ['각인 앞', (r) => r.pf], ['각인 뒤', (r) => r.pb],
@@ -958,23 +961,22 @@ function showCmp(a, b) {
     ['업체', (r) => r.e], ['분류', (r) => r.cl], ['주성분', (r) => r.in],
     ['보험 약가', (r) => (r.pr ? `${won(r.pr)}/${r.pu || '개'}` : '')],
   ];
-  const cells = rows.map(([k, f, n]) => {
-    const x = f(A) || '-', y = f(B) || '-', diff = x !== y;
-    const isSz = !!n, cls = (isSz ? 'sz ' : '') + (diff ? 'diff' : 'same');
-    return `<div class="h">${k}</div><div class="${cls}">${esc(x)}</div><div class="${cls}">${esc(y)}${isSz ? dd(A[n], B[n]) : ''}</div>`;
+  const cells = rows.map(([k, f, key]) => {
+    const vals = rs.map((r) => f(r) || '-'), diff = vals.some((v) => v !== vals[0]);
+    const cls = (key ? 'sz ' : '') + (diff ? 'diff' : 'same');
+    return `<div class="h">${k}</div>` + vals.map((v, i) => `<div class="${cls}">${esc(v)}${key && i ? dd(rs[0][key], rs[i][key]) : ''}</div>`).join('');
   }).join('');
-  const head = (r, i) => `<div class="c"><div class="im">${r.img ? `<img src="${esc(r.img)}" alt="" referrerpolicy="no-referrer">` : glyph(r)}</div><span style="color:${['#facc15', '#22d3ee'][i]}">${i ? '②' : '①'}</span> ${otcBadge(r)}${esc(r.n.replace(/\(.*$/, ''))}</div>`;
-  const dl = A.L && B.L ? Math.abs(Math.max(A.L, A.W || 0) - Math.max(B.L, B.W || 0)) : null;
+  const head = (r, i) => `<div class="c"><div class="im">${r.img ? `<img src="${esc(r.img)}" alt="" referrerpolicy="no-referrer">` : glyph(r)}</div><span style="color:${COL[i]}">${NUM[i]}</span> ${otcBadge(r)}${esc(r.n.replace(/\(.*$/, ''))}</div>`;
+  const ls = rs.map((r) => Math.max(r.L || 0, r.W || 0));
+  const dl = rs.every((r) => r.L) ? Math.max(...ls) - Math.min(...ls) : null;
   box.innerHTML = `
-    <h2 style="margin-top:4px">약 비교</h2>
-    <div class="heads"><div></div>${head(A, 0)}${head(B, 1)}</div>
-    <div class="hint" style="margin:2px 0">노랑 칸은 서로 다른 항목입니다.${dl !== null ? ` 장축 차이 ${dl.toFixed(2)}mm.` : ''}</div>
-    <div class="ovl">${A.L && B.L ? overlaySvg([A, B]) : '<div class="hint">크기 자료가 없어 겹쳐 볼 수 없습니다.</div>'}<div class="hint" style="text-align:center">실제 크기 비율 겹쳐 보기 · <span style="color:#facc15">① 실선</span> · <span style="color:#22d3ee">② 점선</span> (모양은 대략적인 표현)</div></div>
+    <h2 style="margin-top:4px">약 비교 (${n}개)</h2>
+    <div class="heads"><div></div>${rs.map(head).join('')}</div>
+    <div class="hint" style="margin:2px 0">노랑 칸은 서로 다른 항목입니다.${dl !== null ? ` 장축 차이(최대−최소) ${dl.toFixed(2)}mm.` : ''}</div>
+    <div class="ovl">${rs.every((r) => r.L) ? overlaySvg(rs) : '<div class="hint">크기 자료가 없는 약이 있어 겹쳐 볼 수 없습니다.</div>'}<div class="hint" style="text-align:center">실제 크기 비율 겹쳐 보기 · ${rs.map((r, i) => `<span style="color:${COL[i]}">${NUM[i]} ${['실선', '점선', '긴 점선'][i]}</span>`).join(' · ')} (모양은 대략적인 표현)</div></div>
     <div class="grid3">${cells}</div>
-    <div class="row" style="margin-top:12px"><a class="btn secondary" href="#/item/${encodeURIComponent(A.s)}">① 상세 보기</a><a class="btn secondary" href="#/item/${encodeURIComponent(B.s)}">② 상세 보기</a>
-      <button class="secondary" id="cmpSwap">①②바꾸기</button></div>
+    <div class="row" style="margin-top:12px">${rs.map((r, i) => `<a class="btn secondary" href="#/item/${encodeURIComponent(r.s)}">${NUM[i]} 상세 보기</a>`).join('')}</div>
     <p class="disclaimer">크기·모양이 같아도 다른 약일 수 있습니다. 복용 전에는 약 봉투·포장의 이름을 확인하세요.</p>`;
-  $('#cmpSwap').onclick = () => { cmp = [b, a]; location.hash = `#/cmp/${encodeURIComponent(b)}/${encodeURIComponent(a)}`; };
 }
 function showMine() {
   const fl = favs.map((s) => data.bySeq.get(s)).filter(Boolean);

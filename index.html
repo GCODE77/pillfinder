@@ -121,14 +121,14 @@
   #cmpTray .slots{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;font-size:13px;font-weight:700}
   #cmpTray .slots span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #cmpTray button{min-height:40px;padding:0 14px;font-size:14.5px}
-  .cmp .grid3{display:grid;grid-template-columns:62px 1fr 1fr;gap:0;font-size:14px}
+  .cmp .grid3{display:grid;grid-template-columns:62px repeat(var(--n,2),minmax(0,1fr));gap:0;font-size:14px}
   .cmp .grid3>div{padding:7px 8px;border-bottom:1px solid var(--line);word-break:keep-all;overflow-wrap:anywhere}
   .cmp .grid3 .h{color:var(--dim);font-weight:700;font-size:12.5px}
   .cmp .grid3 .diff{background:#2a2410;color:#fde68a;font-weight:800}
   .cmp .grid3 .same{color:var(--muted)}
   .cmp .grid3 .sz{font-weight:900;font-size:15.5px}
   .cmp .grid3 small{display:block;color:#fbbf24;font-weight:800;font-size:12.5px}
-  .cmp .heads{display:grid;grid-template-columns:62px 1fr 1fr;margin-bottom:6px}
+  .cmp .heads{display:grid;grid-template-columns:62px repeat(var(--n,2),minmax(0,1fr));margin-bottom:6px}
   .cmp .heads .c{padding:0 6px;text-align:center;font-weight:800;font-size:14px;line-height:1.3}
   .cmp .heads .im{height:92px;border-radius:10px;background:#0b1222;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-bottom:6px}
   .cmp .heads .im img{width:100%;height:100%;object-fit:cover}
