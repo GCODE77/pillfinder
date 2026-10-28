@@ -230,6 +230,16 @@
   .why span.hi{color:#bbf7d0;background:#0f2e22;border-color:#14532d}
   .sinfo{border-bottom:1px solid var(--edge);color:#c3cee0}
   .simbox{border-top:2px solid var(--edge);padding-top:8px}
+  .price.none{color:#9fb0c8;font-weight:600}
+  .stale{color:#fbbf24}
+  .advice{margin:8px 0;padding:10px 12px;border:1px solid #a16207;border-radius:12px;background:rgba(250,204,21,.09);color:#fde68a;font-size:14px;line-height:1.55}
+  .advice ul{margin:6px 0 0;padding-left:18px}
+  .advice li{margin:3px 0}
+  .cmpsets{display:flex;flex-direction:column;gap:10px}
+  .cmpset{border:1px solid var(--edge);border-radius:12px;padding:10px 12px;background:var(--card,#1a2333)}
+  .cmpset .names{display:flex;flex-direction:column;gap:3px;color:var(--fg,#e8eef8);text-decoration:none;font-weight:700;font-size:15px}
+  .cmpset .meta{color:var(--dim);font-size:13px;margin:6px 0}
+  .cmpset .acts{display:flex;gap:8px}
   table.spec th{color:#c9d4e5;padding:9px 10px 9px 0}
   table.spec td{padding:9px 0;border-bottom:1px solid var(--edge);line-height:1.5;color:#f1f5f9}
   .doc{background:none;padding:0;margin-top:12px}
@@ -322,6 +332,7 @@
             </div>
             <div class="hint" id="obsNote" style="margin-top:8px"></div>
           </div>
+          <div class="advice hidden" id="candAdvice"></div>
           <h2 id="candTitle">닮은 약</h2>
           <div class="bar"><button class="chip" id="candOtc">처방전 없이 살 수 있는 일반의약품만</button></div>
           <div class="list" id="cands"></div>
@@ -369,6 +380,8 @@
     <h2 style="margin-top:4px">내 약</h2>
     <div class="bar" id="favBar"></div>
     <div class="list" id="favList"></div>
+    <h2 id="cmpSecH" class="hidden">저장한 비교</h2>
+    <div class="list cmpsets hidden" id="cmpSecList"></div>
     <h2>최근 찾은 약</h2>
     <div class="bar" id="histBar"></div>
     <div class="list" id="histList"></div>

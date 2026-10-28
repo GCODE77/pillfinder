@@ -274,8 +274,9 @@
   }
   // 조제 테스트용 대체약: 색·각인은 보지 않고 장축·단축·두께와 제형·모양만 (조제기·분포기 시험은 크기·모양이 같으면 된다)
   // ref = 약 한 개 또는 {L, W, T, form, shape}. 결과마다 크기 차(mm) d = {L, W, T}
-  function sizeAlike(db, ref, { otcOnly = false, sameForm = true, sameShape = true, sameLine = true, limit = 40 } = {}) {
+  function sizeAlike(db, ref, { otcOnly = false, sameForm = true, sameShape = true, sameLine = true, sameCoat = false, limit = 40 } = {}) {
     const wantLine = sameLine ? lineWant(ref) : '';
+    const wantCoat = sameCoat ? coatOf(ref) : '';
     const L = Math.max(ref.L || 0, ref.W || 0), W = Math.min(ref.L || 0, ref.W || ref.L || 0), T = ref.T || 0;
     if (!L) return [];
     const fg = ref.form || (ref.f !== undefined ? formGroup(ref) : ''), sh = ref.shape || ref.sh || '';
@@ -285,6 +286,7 @@
       if ((ref.s && x.s === ref.s) || !x.L || (otcOnly && !isOtc(x))) continue;
       if (sameForm && fg && formGroup(x) !== fg) continue;
       if (sameShape && sh && (x.sh || '기타') !== sh) continue;
+      if (wantCoat && coatOf(x) !== wantCoat) continue;
       const xl = Math.max(x.L, x.W || 0), xw = Math.min(x.L, x.W || x.L);
       const d = { L: xl - L, W: W ? xw - W : null, T: T && x.T ? x.T - T : null };
       const z = (d.L / tol(L)) ** 2 + (d.W !== null ? (d.W / tol(W)) ** 2 : 0) + (d.T !== null ? (d.T / tol(T)) ** 2 : T ? 1.5 : 0);
@@ -316,6 +318,18 @@
     if (/캡슐|스팬슐/.test(f)) return '경질캡슐';
     if (/정|트로키/.test(f)) return '정제';
     return '기타';
+  }
+  // 코팅(겉면 질감) 구분: 필름코팅 / 당의 / 나정(코팅 없음) / 서방 / 장용 / 특수(구강붕해·츄어블 등). 캡슐·기타는 ''
+  function coatOf(r) {
+    const f = (r.f || '').replace(/\s/g, '');
+    if (!f || /캡슐|스팬슐/.test(f)) return '';
+    if (/서방/.test(f)) return '서방';
+    if (/장용/.test(f)) return '장용';
+    if (/구강붕해|설하|발포|추어블|츄어블|분산|트로키|껌|질정/.test(f)) return '특수';
+    if (/당의/.test(f)) return '당의';
+    if (/필름코팅/.test(f)) return '필름코팅';
+    if (/나정/.test(f)) return '나정';
+    return '';
   }
   // 크기 허용 오차(mm): 자로 잰 값은 거칠므로 ±0.6mm 또는 ±6% 중 큰 쪽
   const sizeTol = (v, k = 0.06) => Math.max(0.6, v * k);
@@ -380,7 +394,7 @@
     return out.slice(0, limit).map((x) => x.r);
   }
 
-  const api = { rank, scoreOne, manualFilter, formGroup, FORM_DETAIL, similarLook, sizeAlike, lineOf, lineFit, lineWant, sameIngredient, isOtc, hasImprint, imprintMatchScore, searchName, normImprint, imprintSim, dbColors, choseong, COLOR_FAMILY, shapeSim, colorSim };
+  const api = { rank, scoreOne, manualFilter, formGroup, coatOf,FORM_DETAIL, similarLook, sizeAlike, lineOf, lineFit, lineWant, sameIngredient, isOtc, hasImprint, imprintMatchScore, searchName, normImprint, imprintSim, dbColors, choseong, COLOR_FAMILY, shapeSim, colorSim };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Match = api;
 })(typeof self !== 'undefined' ? self : this);

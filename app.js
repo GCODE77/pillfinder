@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.12.2';
+const APP_VERSION = '1.13.0';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -63,9 +63,12 @@ async function loadData() {
     data.meta = meta; data.db = db;
     for (const r of db) data.bySeq.set(r.s, r);
     data.ready = true;
-    const d = new Date(meta.updated);
+    const d = new Date(meta.updated), age = Math.floor((Date.now() - d) / 864e5);
+    const pa = String(meta.priceAt || ''), priceDay = /^\d{8}$/.test(pa) ? `${pa.slice(0, 4)}.${+pa.slice(4, 6)}.${+pa.slice(6)}` : '';
     $('#dbInfo').textContent = `${db.length.toLocaleString()}품목 · ${d.getMonth() + 1}/${d.getDate()} 갱신`;
-    $('#sData').textContent = `낱알 ${db.length.toLocaleString()}품목, 상세 ${Number(meta.details || 0).toLocaleString()}품목 · ${d.toLocaleDateString('ko-KR')} 기준${DEMO ? ' (데모 데이터)' : ''}`;
+    $('#dbInfo').classList.toggle('stale', age > 30);
+    $('#sData').innerHTML = `낱알 ${db.length.toLocaleString()}품목, 상세 ${Number(meta.details || 0).toLocaleString()}품목${DEMO ? ' (데모 데이터)' : ''}<br><b>약 정보 기준일</b> ${d.toLocaleDateString('ko-KR')} (${age <= 0 ? '오늘' : age + '일 전'}) · 약 정보는 매주 자동 갱신${priceDay ? `<br><b>약가 기준일</b> ${priceDay} (건강보험 상한가)` : ''}${age > 30 ? '<br><span class="stale">⚠ 데이터가 한 달 넘게 갱신되지 않았습니다. 새로 나온 약·바뀐 약가가 빠졌을 수 있어요.</span>' : ''}`;
+    if (age > 30 && !DEMO) showBanner(`약 데이터가 ${age}일 전 기준입니다. 새로 나온 약이나 바뀐 약가가 반영되지 않았을 수 있어요.`);
     if (DEMO) showBanner('데모 데이터로 실행 중입니다. 약 이름·정보는 모두 가짜입니다.');
   } catch {
     showBanner('약 데이터가 아직 없습니다. 관리자가 식약처 인증키로 데이터를 만들어야 합니다(README의 "데이터 만들기"). 카메라 분석은 되지만 약 이름은 찾을 수 없습니다.', true);
@@ -108,6 +111,8 @@ const imgOf = (r, big) => (r.img ? `<img src="${esc(r.img)}" alt="" loading="laz
 const otcBadge = (r) => (r.o ? `<span class="badge ${/전문/.test(r.o) ? 'etc' : 'otc'}">${esc(/전문/.test(r.o) ? '전문' : '일반')}</span>` : '');
 const won = (v) => `${Math.round(v).toLocaleString()}원`;
 const priceTxt = (r) => (r.pr ? `약가 ${won(r.pr)}/${r.pu || '개'}` : '');
+// 약가가 없는 약: 일반의약품은 약국마다 값이 달라 공식 가격이 없고, 전문의약품은 약가 자료에 없는 경우
+const noPriceTxt = (r) => (data.meta && data.meta.priced ? (M.isOtc(r) ? '공식 가격 없음 (약국마다 다름)' : '약가 정보 없음') : '');
 const sizeTxt = (r) => (r.L ? [`장 ${r.L}`, r.W && `단 ${r.W}`, r.T && `두께 ${r.T}`].filter(Boolean).join(' · ') + 'mm' : '');
 // 분할선(반절선) 표시: − 한 줄, + 십자, 종류 모르면 '있음'
 const lineTxt = (r) => { const l = M.lineOf(r); return l.has ? (l.kinds.length ? l.kinds.map((k) => ({ '-': '−', '+': '+' }[k] || k)).join('/') : '있음') : ''; };
@@ -141,7 +146,7 @@ function toggleCmp(seq) {
 const preCard = (x) => (x.key ? `<input type="checkbox" class="ck" tabindex="-1" ${x.checked ? 'checked' : ''}>` : '') + (x.num ? `<span class="num">${x.num}</span>` : '');
 function card(r, extra = {}) {
   const fg = M.formGroup(r);
-  const feat = [r.sh, /캡슐/.test(fg) && fg, M.dbColors(r).join('·'), printTxt(r) && `<b>${esc(printTxt(r))}</b>`, lineTxt(r) && `분할선 ${lineTxt(r)}`, r.pr && `<span class="price">${esc(priceTxt(r))}</span>`].filter(Boolean);
+  const feat = [r.sh, /캡슐/.test(fg) && fg, M.dbColors(r).join('·'), printTxt(r) && `<b>${esc(printTxt(r))}</b>`, lineTxt(r) && `분할선 ${lineTxt(r)}`, r.pr ? `<span class="price">${esc(priceTxt(r))}</span>` : (data.meta && data.meta.priced ? `<span class="price none">${M.isOtc(r) ? '약국별 가격' : '약가 정보 없음'}</span>` : '')].filter(Boolean);
   // 크기는 비교하기 쉽게 따로 한 줄(장축·단축·두께)
   const size = r.L ? `<span class="size"><i>장</i>${r.L} <i>단</i>${r.W || '-'} <i>두께</i>${r.T || '-'} <i>mm</i></span>` : '<span class="size"><i>크기 자료 없음</i></span>';
   const cmpb = extra.key ? '' : `<span class="cmpbtn${cmp.includes(r.s) ? ' on' : ''}" role="button" data-cmp="${esc(r.s)}">${cmp.includes(r.s) ? '비교 ✓' : '비교 +'}</span><span class="detbtn" role="button" data-det="${esc(r.s)}">상세 ›</span>`;
@@ -668,10 +673,27 @@ let candOtc = false;
 $('#candOtc').addEventListener('click', (e) => { candOtc = !candOtc; e.currentTarget.classList.toggle('on', candOtc); rerank(); });
 function rerank() {
   if (!data.ready) { $('#cands').innerHTML = '<div class="empty-msg">약 데이터가 없어 비교할 수 없습니다.</div>'; return; }
-  const ranked = M.rank(data.db, currentObs(), { limit: 30, filter: candOtc ? M.isOtc : undefined });
+  const obs = currentObs();
+  const ranked = M.rank(data.db, obs, { limit: 30, filter: candOtc ? M.isOtc : undefined });
+  candAdvice(obs, ranked);
   $('#candTitle').textContent = `닮은 약 ${ranked.length ? '' : '— 없음'}`;
   $('#cands').innerHTML = ranked.map((x, i) => card(x.r, { score: x.score, parts: x.parts, num: i + 1 })).join('');
   rerank.top = ranked[0];
+}
+
+// 결과가 불확실할 때 왜 그런지, 어떻게 다시 찍으면 좋은지 알려 준다
+function candAdvice(obs, ranked) {
+  const box = $('#candAdvice'), top = ranked[0], second = ranked[1];
+  const tips = [];
+  const noImp = !obs.imprints.length && obs.has !== 'none';
+  const low = !top || top.score < 0.6;
+  if (low) tips.push(`일치도가 낮아요${top ? ` (1순위 ${Math.round(top.score * 100)}%)` : ''}. 밝은 곳에서 흰 종이 위에 약을 놓고, 화면 가득 차게 위에서 똑바로 찍어 보세요. 그림자·반사가 없어야 해요.`);
+  if (noImp) tips.push('각인(새겨진 글자)을 읽지 못했어요. "각인 확대 찍기"로 글자 부분만 가까이 찍거나, 보이는 글자를 직접 입력하면 가장 정확해져요.');
+  if (!obs.mm && (low || noImp)) tips.push('동전이나 카드를 약 옆에 놓고 찍으면 실제 크기까지 비교해서 더 정확해져요.');
+  if (sides.length < 2 && (low || noImp)) tips.push('뒷면도 찍어 주세요. 각인이 뒷면에만 있는 약이 많아요.');
+  if (top && second && top.score - second.score < 0.03 && !low) tips.push('1·2순위가 거의 같아요. 각인·크기·색을 눈으로 확인해 구분하세요.');
+  box.classList.toggle('hidden', !tips.length);
+  box.innerHTML = tips.length ? `<b>${low ? '결과가 확실하지 않아요' : '정확도를 더 높이려면'}</b><ul>${tips.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : '';
 }
 
 function saveHistory() {
@@ -842,6 +864,7 @@ async function showItem(seq) {
         <button class="chip on" id="simForm">제형 같게 (${esc(M.formGroup(r))})</button>
         <button class="chip on" id="simShape">모양 같게 (${esc(r.sh || '기타')})</button>
         <button class="chip on" id="simLine">분할선 같게 (${esc(lineTxt(r) ? '분할선 ' + lineTxt(r) : '없음')})</button>
+        ${M.coatOf(r) ? `<button class="chip" id="simCoat">코팅 같게 (${esc(M.coatOf(r))})</button>` : ''}
       </div>
       <div class="bar">
         <button class="chip ${M.isOtc(r) ? '' : 'on'}" id="simOtc">처방전 없이 살 수 있는 일반의약품만</button>
@@ -877,13 +900,13 @@ async function showItem(seq) {
     toast('기억했습니다. 내 약에도 저장했어요');
   });
   // 비슷한 약: 생김새(크기·모양·색·제형) / 같은 성분, 일반의약품만, 싼 순
-  const sim = { mode: 'size', otc: !M.isOtc(r), sort: '', form: true, shape: true, line: true };
+  const sim = { mode: 'size', otc: !M.isOtc(r), sort: '', form: true, shape: true, line: true, coat: false };
   const mmd = (v) => { if (v === null) return ''; const x = Math.round(v * 100) / 100; return `${x > 0 ? '+' : x < 0 ? '−' : '±'}${Math.abs(x).toFixed(2)}`; };
   const drawSim = () => {
     let list, note;
     $('#simSizeOpt').classList.toggle('hidden', sim.mode !== 'size');
     if (sim.mode === 'size') {
-      list = M.sizeAlike(data.db, r, { otcOnly: sim.otc, sameForm: sim.form, sameShape: sim.shape, sameLine: sim.line, limit: 60 }).map((x) => ({
+      list = M.sizeAlike(data.db, r, { otcOnly: sim.otc, sameForm: sim.form, sameShape: sim.shape, sameLine: sim.line, sameCoat: sim.coat, limit: 60 }).map((x) => ({
         r: x.r, score: x.score,
         note: `차이 · 장축 ${mmd(x.d.L)}` + (x.d.W !== null ? ` · 단축 ${mmd(x.d.W)}` : '') + (x.d.T !== null ? ` · 두께 ${mmd(x.d.T)}` : r.T ? ' · 두께 자료 없음' : '') + 'mm',
       }));
@@ -906,7 +929,7 @@ async function showItem(seq) {
   $('#item').querySelectorAll('[data-sim]').forEach((b) => b.addEventListener('click', () => { sim.mode = b.dataset.sim; $('#item').querySelectorAll('[data-sim]').forEach((c) => c.classList.toggle('on', c === b)); drawSim(); }));
   $('#simOtc').addEventListener('click', (e) => { sim.otc = !sim.otc; e.currentTarget.classList.toggle('on', sim.otc); drawSim(); });
   $('#simSort').addEventListener('change', (e) => { sim.sort = e.target.value; drawSim(); });
-  for (const k of ['form', 'shape', 'line']) $('#sim' + k[0].toUpperCase() + k.slice(1)).addEventListener('click', (e) => { sim[k] = !sim[k]; e.currentTarget.classList.toggle('on', sim[k]); drawSim(); });
+  for (const k of ['form', 'shape', 'line', 'coat']) if ($('#sim' + k[0].toUpperCase() + k.slice(1))) $('#sim' + k[0].toUpperCase() + k.slice(1)).addEventListener('click', (e) => { sim[k] = !sim[k]; e.currentTarget.classList.toggle('on', sim[k]); drawSim(); });
   setTimeout(drawSim, 0);
   $('#cmpBtn').addEventListener('click', (e) => { toggleCmp(seq); const on = cmp.includes(seq); e.currentTarget.classList.toggle('on', on); e.currentTarget.textContent = on ? '비교에 담김' : '비교에 담기'; });
   $('#shareBtn').addEventListener('click', async () => {
@@ -974,11 +997,11 @@ function showCmp(seqs) {
   const mm = (v) => (v ? `${v}mm` : '');
   const dd = (x, y) => { if (!x || !y) return ''; const d = Math.round((y - x) * 100) / 100; return d ? `<small>① 대비 ${d > 0 ? '+' : '−'}${Math.abs(d)}mm</small>` : '<small style="color:#86efac">① 과 같음</small>'; };
   const rows = [
-    ['구분', (r) => r.o], ['제형', (r) => r.f], ['모양', (r) => r.sh], ['색', (r) => M.dbColors(r).join(', ')],
+    ['구분', (r) => r.o], ['제형', (r) => r.f], ['코팅', (r) => M.coatOf(r)], ['모양', (r) => r.sh], ['색', (r) => M.dbColors(r).join(', ')],
     ['각인 앞', (r) => r.pf], ['각인 뒤', (r) => r.pb], ['분할선', (r) => lineTxt(r) || '없음'],
     ['장축', (r) => mm(r.L), 'L'], ['단축', (r) => mm(r.W), 'W'], ['두께', (r) => mm(r.T), 'T'],
     ['업체', (r) => r.e], ['분류', (r) => r.cl], ['주성분', (r) => r.in],
-    ['보험 약가', (r) => (r.pr ? `${won(r.pr)}/${r.pu || '개'}` : '')],
+    ['보험 약가', (r) => (r.pr ? `${won(r.pr)}/${r.pu || '개'}` : noPriceTxt(r))],
   ];
   const cells = rows.map(([k, f, key]) => {
     const vals = rs.map((r) => f(r) || '-'), diff = vals.some((v) => v !== vals[0]);
@@ -994,9 +1017,43 @@ function showCmp(seqs) {
     <div class="hint" style="margin:2px 0">노랑 칸은 서로 다른 항목입니다.${dl !== null ? ` 장축 차이(최대−최소) ${dl.toFixed(2)}mm.` : ''}</div>
     <div class="ovl">${rs.every((r) => r.L) ? overlaySvg(rs) : '<div class="hint">크기 자료가 없는 약이 있어 겹쳐 볼 수 없습니다.</div>'}<div class="hint" style="text-align:center">실제 크기 비율 겹쳐 보기 · ${rs.map((r, i) => `<span style="color:${COL[i]}">${NUM[i]} ${['실선', '점선', '긴 점선'][i]}</span>`).join(' · ')} (모양은 대략적인 표현)</div></div>
     <div class="grid3">${cells}</div>
-    <div class="row" style="margin-top:12px">${rs.map((r, i) => `<a class="btn secondary" href="#/item/${encodeURIComponent(r.s)}">${NUM[i]} 상세 보기</a>`).join('')}</div>
+    <div class="row" style="margin-top:12px"><button class="primary" id="cmpSave">${cmpSaved(seqs) ? '저장됨 ✓ (내 약 탭)' : '이 비교 저장'}</button><button class="secondary" id="cmpLink">링크 복사</button></div>
+    <div class="row" style="margin-top:8px">${rs.map((r, i) => `<a class="btn secondary" href="#/item/${encodeURIComponent(r.s)}">${NUM[i]} 상세 보기</a>`).join('')}</div>
     <p class="disclaimer">크기·모양이 같아도 다른 약일 수 있습니다. 복용 전에는 약 봉투·포장의 이름을 확인하세요.</p>`;
+  $('#cmpSave').onclick = (e) => {
+    const k = cmpKey(seqs), i = cmps.findIndex((c) => cmpKey(c.seqs) === k);
+    if (i >= 0) { cmps.splice(i, 1); toast('저장한 비교에서 뺐어요'); e.target.textContent = '이 비교 저장'; }
+    else { cmps.unshift({ t: Date.now(), seqs: seqs.slice() }); cmps = cmps.slice(0, 20); toast('내 약 탭에 저장했어요'); e.target.textContent = '저장됨 ✓ (내 약 탭)'; }
+    store.set('pf.cmps', cmps);
+  };
+  $('#cmpLink').onclick = async () => {
+    try { await navigator.clipboard.writeText(location.href); toast('비교 링크를 복사했습니다'); } catch { toast(location.href, 4000); }
+  };
 }
+// 저장한 비교 묶음(조제 테스트용 대체약 세트): 같은 약 묶음은 순서와 관계없이 하나로 본다
+let cmps = store.get('pf.cmps', []);
+const cmpKey = (seqs) => seqs.slice().sort().join('|');
+const cmpSaved = (seqs) => cmps.some((c) => cmpKey(c.seqs) === cmpKey(seqs));
+function showCmps() {
+  const list = cmps.filter((c) => c.seqs.every((s) => data.bySeq.get(s)));
+  $('#cmpSecH').classList.toggle('hidden', !list.length); $('#cmpSecList').classList.toggle('hidden', !list.length);
+  $('#cmpSecList').innerHTML = list.map((c) => {
+    const names = c.seqs.map((s, i) => `<span><b>${['①', '②', '③'][i]}</b> ${esc(data.bySeq.get(s).n.replace(/\(.*$/, ''))}</span>`).join('');
+    const when = new Date(c.t).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric' });
+    return `<div class="cmpset"><a href="#/cmp/${c.seqs.map(encodeURIComponent).join('/')}" class="names">${names}</a><div class="meta">${when} 저장 · ${c.seqs.length}개 비교</div><div class="acts"><button class="chip" data-cs-share="${esc(c.t)}">공유</button><button class="chip danger" data-cs-del="${esc(c.t)}">삭제</button></div></div>`;
+  }).join('');
+}
+$('#cmpSecList').addEventListener('click', async (e) => {
+  const sh = e.target.closest('[data-cs-share]'), del = e.target.closest('[data-cs-del]');
+  if (del) { if (!confirm('이 비교를 지울까요?')) return; cmps = cmps.filter((c) => String(c.t) !== del.dataset.csDel); store.set('pf.cmps', cmps); showCmps(); return; }
+  if (sh) {
+    const c = cmps.find((x) => String(x.t) === sh.dataset.csShare); if (!c) return;
+    const url = `${location.origin}${location.pathname}#/cmp/${c.seqs.map(encodeURIComponent).join('/')}`;
+    const text = '필파인더 약 비교\n' + c.seqs.map((s, i) => `${i + 1}. ${data.bySeq.get(s).n}`).join('\n') + '\n' + url;
+    try { if (navigator.share) { await navigator.share({ title: '필파인더 약 비교', text }); return; } } catch (er) { if (er && er.name === 'AbortError') return; }
+    try { await navigator.clipboard.writeText(text); toast('비교를 복사했습니다'); } catch { toast('복사하지 못했습니다'); }
+  }
+});
 function showMine() {
   const fl = favs.map((s) => data.bySeq.get(s)).filter(Boolean);
   $('#favList').innerHTML = fl.length ? fl.map((r, i) => card(r, { num: i + 1, ...(mineMode.fav ? { key: r.s, checked: mineSel.fav.has(r.s) } : {}) })).join('') : '<div class="empty-msg">약 상세 화면에서 <b>내 약에 저장</b>을 누르면 여기에 모입니다.</div>';
@@ -1009,6 +1066,7 @@ function showMine() {
     return `<button class="card${sel ? ' sel' : ''}" data-hk="${esc(k)}" ${mineMode.hist ? `data-seq="${esc(h.seq || 'x')}" data-key="${esc(k)}"` : r ? `data-seq="${esc(r.s)}"` : ''}>${preCard({ num: i + 1, ...(mineMode.hist ? { key: k, checked: sel } : {}) })}<div class="img"><img src="${h.thumb}" alt=""></div>
       <div class="body"><div class="name">${r ? esc(r.n) : '찾지 못함'}</div><div class="sub">${when} · 1순위 후보</div></div></button>`;
   }).join('') : '<div class="empty-msg">아직 찍어서 찾은 약이 없습니다.</div>';
+  showCmps();
   $('#favBar').innerHTML = mineBar('fav'); $('#histBar').innerHTML = mineBar('hist');
   $('#sCoin').value = settings.coin;
   $('#sShare').checked = settings.share; $('#shareRow').classList.toggle('hidden', !SH.enabled());
