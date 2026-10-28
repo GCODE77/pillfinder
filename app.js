@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.14.0';
+const APP_VERSION = '1.15.0';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -853,6 +853,7 @@ async function showItem(seq) {
         <table class="spec">${spec.map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join('')}<tr id="ingrRow" class="hidden"><th>성분</th><td></td></tr></table>
       </div>
     </div>
+    <div class="dur hidden" id="durBox"></div>
     <div class="doc" id="doc"><div class="hint" style="padding:14px 0">효능·용법·주의사항 불러오는 중…</div></div>
     <div class="links">
       <a class="btn secondary" target="_blank" rel="noopener" href="https://nedrug.mfds.go.kr/pbp/CCBBB01/getItemDetail?itemSeq=${encodeURIComponent(r.s)}">의약품안전나라 원문</a>
@@ -946,6 +947,7 @@ async function showItem(seq) {
   $('#shareBtn').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(location.href); toast('링크를 복사했습니다'); } catch { toast(location.href, 4000); }
   });
+  loadDur().then((dur) => { if (dur && location.hash === '#/item/' + encodeURIComponent(seq)) renderDur($('#durBox'), seq, dur); });
   const d = await detailOf(seq);
   if (location.hash !== '#/item/' + encodeURIComponent(seq)) return;
   const doc = $('#doc');
@@ -954,6 +956,29 @@ async function showItem(seq) {
   const sec = [['efcy', '효능·효과'], ['use', '용법·용량'], ['warn', '이 약을 쓰기 전 꼭 알아야 할 것'], ['atpn', '주의사항'], ['intrc', '같이 먹으면 안 되는 약·음식'], ['se', '부작용'], ['keep', '보관 방법'], ['keep2', '저장 방법'], ['valid', '사용 기한']];
   doc.innerHTML = sec.filter(([k]) => d[k]).map(([k, t]) => `<details><summary>${t}</summary><div class="txt">${esc(d[k])}</div></details>`).join('') +
     `<div class="hint" style="padding:10px 0">출처: 식약처 ${esc(d.src)}</div>`;
+}
+
+// ---------- 안전 정보(DUR) ----------
+// 식약처 DUR 품목정보: 병용금기·임부금기·연령금기·노인주의·용량주의·투여기간주의·효능군중복·분할주의. data/dur.json(성분별)에서 읽는다
+let durP = null;
+const loadDur = () => durP || (durP = fetch(BASE + 'dur.json').then((r) => (r.ok ? r.json() : null)).catch(() => null));
+function renderDur(box, seq, dur) {
+  const ings = (dur.item[seq] || '').split(',').filter(Boolean).map((c) => dur.ing[c]).filter(Boolean);
+  const split = dur.sp && dur.sp[seq];
+  const rows = [];
+  if (split) rows.push(['분할 주의', '쪼개거나 부수지 마세요' + (split !== '1' && split !== '분할 주의' ? ` (${split})` : ''), 'warn']);
+  for (const [k, label, lv] of [['pw', '임부 금기', 'bad'], ['ag', '연령 금기', 'bad'], ['od', '노인 주의', 'warn'], ['cp', '용량 주의', 'warn'], ['md', '투여기간 주의', 'warn'], ['ef', '효능군 중복', 'info']]) {
+    const t = [...new Set(ings.map((o) => o[k]).filter(Boolean))].filter((x) => x !== '1');
+    if (ings.some((o) => o[k])) rows.push([label, k === 'ef' ? `${t.join(', ')} 계열 — 같은 계열 약과 함께 먹으면 효과가 겹칠 수 있어요` : t.join(' / '), lv]);
+  }
+  const co = new Map();
+  for (const o of ings) for (const [c, n, why] of o.co || []) if (!co.has(c)) co.set(c, [n, why]);
+  if (!rows.length && !co.size) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  box.innerHTML = `<h2>안전 정보 (DUR)</h2>
+    ${rows.map(([l, t, lv]) => `<div class="durrow"><b class="dtag ${lv}">${esc(l)}</b><span>${esc(t)}</span></div>`).join('')}
+    ${co.size ? `<details class="durco"><summary><b class="dtag bad">병용 금기</b> 같이 먹으면 안 되는 성분 ${co.size}개 (눌러서 보기)</summary><ul>${[...co.values()].map(([n, why]) => `<li><b>${esc(n)}</b>${why ? ` <small>— ${esc(why)}</small>` : ''}</li>`).join('')}</ul></details>` : ''}
+    <div class="hint" style="margin-top:6px">식약처 DUR(의약품 사용 점검) 품목정보 기준${dur.at ? ` · ${esc(dur.at)} 받음` : ''}. 성분 단위 정보라 참고용입니다. 복용 중인 약이 있으면 의사·약사와 꼭 상의하세요.</div>`;
 }
 
 // ---------- 내 약 · 설정 ----------

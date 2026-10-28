@@ -58,6 +58,25 @@ jobs:
         with:
           path: data
           key: mfds-data-v6-${{ steps.week.outputs.w }}
+      # 안전 정보(DUR 병용금기·임부금기 등): 낱알 데이터와 따로 받고 따로 캐시한다(실패해도 앱은 배포)
+      - uses: actions/cache/restore@v4
+        id: durcache
+        if: ${{ !inputs.fresh }}
+        with:
+          path: data/dur.json
+          key: mfds-dur-v1-${{ steps.week.outputs.w }}
+      - name: 안전 정보(DUR) 받기
+        id: dur
+        if: steps.durcache.outputs.cache-hit != 'true' && hashFiles('data/pills.json') != ''
+        continue-on-error: true
+        env:
+          SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+        run: node scripts/build-safety.mjs
+      - uses: actions/cache/save@v4
+        if: steps.durcache.outputs.cache-hit != 'true' && steps.dur.outcome == 'success'
+        with:
+          path: data/dur.json
+          key: mfds-dur-v1-${{ steps.week.outputs.w }}
       - name: 올릴 파일 고르기
         run: |
           mkdir -p _site
