@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.8.3';
+const APP_VERSION = '1.9.0';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -106,18 +106,20 @@ function glyph(r) {
 }
 const imgOf = (r, big) => (r.img ? `<img src="${esc(r.img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(document.createRange().createContextualFragment(this.dataset.g))" data-g="${esc(glyph(r))}">` : glyph(r));
 const otcBadge = (r) => (r.o ? `<span class="badge ${/전문/.test(r.o) ? 'etc' : 'otc'}">${esc(/전문/.test(r.o) ? '전문' : '일반')}</span>` : '');
+const won = (v) => `${Math.round(v).toLocaleString()}원`;
+const priceTxt = (r) => (r.pr ? `약가 ${won(r.pr)}/${r.pu || '개'}` : '');
 const sizeTxt = (r) => (r.L ? [`장 ${r.L}`, r.W && `단 ${r.W}`, r.T && `두께 ${r.T}`].filter(Boolean).join(' · ') + 'mm' : '');
 const printTxt = (r) => [r.pf, r.pb].filter(Boolean).join(' / ');
 
 const preCard = (x) => (x.key ? `<input type="checkbox" class="ck" tabindex="-1" ${x.checked ? 'checked' : ''}>` : '') + (x.num ? `<span class="num">${x.num}</span>` : '');
 function card(r, extra = {}) {
   const fg = M.formGroup(r);
-  const feat = [r.sh, /캡슐/.test(fg) && fg, M.dbColors(r).join('·'), printTxt(r) && `<b>${esc(printTxt(r))}</b>`, sizeTxt(r)].filter(Boolean);
+  const feat = [r.sh, /캡슐/.test(fg) && fg, M.dbColors(r).join('·'), printTxt(r) && `<b>${esc(printTxt(r))}</b>`, sizeTxt(r), r.pr && `<span class="price">${esc(priceTxt(r))}</span>`].filter(Boolean);
   const why = extra.parts ? Object.entries(extra.parts).map(([k, v]) => `<span class="${v > 0.75 ? 'hi' : ''}">${{ shape: '모양', color: '색', aspect: '비율', size: '크기', imprint: '각인', line: '분할선', blank: '빈면', form: '제형', hasimp: '각인 유무', learned: '내가 확인한 약' }[k]} ${Math.round(v * 100)}</span>`).join('') : '';
   return `<button class="card${extra.checked ? ' sel' : ''}" data-seq="${esc(r.s)}"${extra.key ? ` data-key="${esc(extra.key)}"` : ''}>
     ${preCard(extra)}<div class="img">${imgOf(r)}</div>
     <div class="body"><div class="name">${otcBadge(r)}${esc(r.n)}</div><div class="sub">${esc(r.e)}${r.cl ? ' · ' + esc(r.cl) : ''}</div>
-      <div class="feat">${feat.map((f) => `<span>${f.startsWith('<b>') ? f : esc(f)}</span>`).join('')}</div>${why ? `<div class="why">${why}</div>` : ''}</div>
+      <div class="feat">${feat.map((f) => `<span>${f.startsWith('<') ? f : esc(f)}</span>`).join('')}</div>${why ? `<div class="why">${why}</div>` : ''}</div>
     ${extra.score !== undefined ? `<div class="score">${Math.round(extra.score * 100)}<small>일치</small></div>` : ''}
   </button>`;
 }
@@ -622,9 +624,11 @@ function renderResult(fresh, noHistory) {
   if (fresh && !noHistory) saveHistory();
 }
 
+let candOtc = false;
+$('#candOtc').addEventListener('click', (e) => { candOtc = !candOtc; e.currentTarget.classList.toggle('on', candOtc); rerank(); });
 function rerank() {
   if (!data.ready) { $('#cands').innerHTML = '<div class="empty-msg">약 데이터가 없어 비교할 수 없습니다.</div>'; return; }
-  const ranked = M.rank(data.db, currentObs(), { limit: 30 });
+  const ranked = M.rank(data.db, currentObs(), { limit: 30, filter: candOtc ? M.isOtc : undefined });
   $('#candTitle').textContent = `닮은 약 ${ranked.length ? '' : '— 없음'}`;
   $('#cands').innerHTML = ranked.map((x, i) => card(x.r, { score: x.score, parts: x.parts, num: i + 1 })).join('');
   rerank.top = ranked[0];
@@ -689,7 +693,10 @@ $('#btnBack').addEventListener('click', () => {
 });
 
 // ---------- 약 검색 (이름 · 각인 · 크기 · 모양 · 색 — 아는 것만 넣으면 된다) ----------
-const filt = { shapes: [], colors: [], forms: [], formD: [], has: '' };
+const filt = { shapes: [], colors: [], forms: [], formD: [], has: '', otc: '' };
+$('#fOtc').innerHTML = '<button class="chip" data-otc="일반">일반의약품만 (처방전 없이)</button><button class="chip" data-otc="전문">전문의약품만</button>';
+$('#fOtc').addEventListener('click', (e) => { const b = e.target.closest('[data-otc]'); if (!b) return; filt.otc = filt.otc === b.dataset.otc ? '' : b.dataset.otc; document.querySelectorAll('#fOtc .chip').forEach((c) => c.classList.toggle('on', c.dataset.otc === filt.otc)); runFilter(); });
+$('#fSort').addEventListener('change', runFilter);
 $('#fHas').innerHTML = '<button class="chip" data-has="has">각인 있음</button><button class="chip" data-has="none">각인 없음</button>';
 $('#fHas').addEventListener('click', (e) => { const b = e.target.closest('[data-has]'); if (!b) return; filt.has = filt.has === b.dataset.has ? '' : b.dataset.has; document.querySelectorAll('#fHas .chip').forEach((c) => c.classList.toggle('on', c.dataset.has === filt.has)); runFilter(); });
 $('#fFormD').innerHTML = Object.keys(M.FORM_DETAIL).map((s) => formTile(s, 'data-formd')).join('');
@@ -705,7 +712,7 @@ let fRes = [], fShown = 0, fT;
 for (const id of ['#q', '#fImprint', '#fL', '#fW', '#fT']) $(id).addEventListener('input', () => { clearTimeout(fT); fT = setTimeout(runFilter, 200); });
 $('#fSimilar').addEventListener('change', runFilter);
 $('#fReset').addEventListener('click', () => {
-  filt.shapes = []; filt.colors = []; filt.forms = []; filt.formD = []; filt.has = '';
+  filt.shapes = []; filt.colors = []; filt.forms = []; filt.formD = []; filt.has = ''; filt.otc = ''; $('#fSort').value = '';
   for (const id of ['#q', '#fImprint', '#fL', '#fW', '#fT']) $(id).value = '';
   document.querySelectorAll('#pgSearch .on').forEach((c) => c.classList.remove('on'));
   runFilter();
@@ -717,10 +724,10 @@ function runFilter() {
   $('#sumFormD').textContent = filt.formD.length ? '세부 제형 · ' + filt.formD.join(', ') : '세부 제형 (필름코팅·서방·장용…)';
   $('#sumShape').textContent = filt.shapes.length ? '모양 · ' + filt.shapes.join(', ') : '모양 (눌러서 고르기)';
   $('#sumColor').textContent = filt.colors.length ? '색 · ' + filt.colors.join(', ') : '색 (눌러서 고르기)';
-  const any = qn || imprint || filt.has || filt.formD.length || filt.forms.length || filt.shapes.length || filt.colors.length || size.L || size.W || size.T;
+  const any = qn || imprint || filt.otc || filt.has || filt.formD.length || filt.forms.length || filt.shapes.length || filt.colors.length || size.L || size.W || size.T;
   if (!any) { fRes = []; $('#fList').innerHTML = ''; $('#fInfo').textContent = '아는 것만 넣어도 됩니다. 이름, 각인, 크기, 모양, 색 어느 것이든 좋아요.'; $('#fMore').classList.add('hidden'); return; }
   if (!data.ready) { $('#fInfo').textContent = '약 데이터가 없습니다.'; return; }
-  const f = M.manualFilter({ shapes: filt.shapes, colors: filt.colors, forms: filt.forms, formD: filt.formD, has: filt.has, imprint, similarColors: $('#fSimilar').checked, size });
+  const f = M.manualFilter({ shapes: filt.shapes, colors: filt.colors, forms: filt.forms, formD: filt.formD, has: filt.has, otc: filt.otc, imprint, similarColors: $('#fSimilar').checked, size });
   // 이름을 넣었으면 이름 검색 순서를 유지하고, 아니면 각인 일치 → 크기가 가까운 순
   fRes = (qn ? M.searchName(data.db, qn, 3000) : data.db).filter(f);
   if (!qn) {
@@ -730,7 +737,8 @@ function runFilter() {
   }
   $('#sumShape').textContent = filt.shapes.length ? '모양 · ' + filt.shapes.join(', ') : '모양 (눌러서 고르기)';
   $('#sumColor').textContent = filt.colors.length ? '색 · ' + filt.colors.join(', ') : '색 (눌러서 고르기)';
-  const cond = [qn && `"${qn}"`, imprint && `각인 ${imprint}`, filt.has === 'has' && '각인 있음', filt.has === 'none' && '각인 없음', ...filt.forms, ...filt.formD, ...filt.shapes, ...filt.colors, size.L && `장축 ${size.L}`, size.W && `단축 ${size.W}`, size.T && `두께 ${size.T}`].filter(Boolean).join(' · ');
+  const cond = [qn && `"${qn}"`, imprint && `각인 ${imprint}`, filt.otc && `${filt.otc}의약품`, filt.has === 'has' && '각인 있음', filt.has === 'none' && '각인 없음', ...filt.forms, ...filt.formD, ...filt.shapes, ...filt.colors, size.L && `장축 ${size.L}`, size.W && `단축 ${size.W}`, size.T && `두께 ${size.T}`].filter(Boolean).join(' · ');
+  if ($('#fSort').value === 'price') fRes = fRes.slice().sort((a, b) => (a.pr ?? 1e12) - (b.pr ?? 1e12));
   fShown = 0; $('#fList').innerHTML = '';
   $('#fInfo').textContent = fRes.length ? `${qn && fRes.length >= 3000 ? '3,000+' : fRes.length.toLocaleString()}개 · ${cond}` : `찾는 약이 없습니다. 조건을 줄여 보세요 (${cond})`;
   moreFilter();
@@ -756,6 +764,8 @@ async function showItem(seq) {
     ['색', M.dbColors(r).join(', ')], ['각인 앞', r.pf], ['각인 뒤', r.pb], ['마크', [r.mf, r.mb].filter(Boolean).join(' / ')],
     ['분할선', [r.lf && '앞 ' + r.lf, r.lb && '뒤 ' + r.lb].filter(Boolean).join(', ')],
     ['크기', r.L ? `장축 ${r.L}mm${r.W ? ` · 단축 ${r.W}mm` : ''}${r.T ? ` · 두께 ${r.T}mm` : ''}` : ''],
+    ['주성분', r.in],
+    ['보험 약가', r.pr ? `${won(r.pr)} / ${r.pu || '1개'}${r.pn ? ` (${r.pn})` : ''} — 건강보험 상한가, 실제 약국 가격·본인부담은 다를 수 있음` : (data.meta && data.meta.priced ? (M.isOtc(r) ? '공식 가격 없음 (일반의약품은 약국마다 가격이 다름)' : '약가 정보 없음') : '')],
     ['성상', r.ch], ['영문명', r.en], ['품목코드', r.s],
   ].filter(([, v]) => v);
   box.innerHTML = `
@@ -774,6 +784,19 @@ async function showItem(seq) {
     <div class="links">
       <a class="btn secondary" target="_blank" rel="noopener" href="https://nedrug.mfds.go.kr/pbp/CCBBB01/getItemDetail?itemSeq=${encodeURIComponent(r.s)}">의약품안전나라 원문</a>
       <a class="btn secondary" target="_blank" rel="noopener" href="https://www.health.kr/searchResult?search_value=${encodeURIComponent(r.n.replace(/\(.*$/, ''))}">약학정보원에서 보기</a>
+    </div>
+    <div class="simbox">
+      <h2>비슷한 약 찾기</h2>
+      <div class="bar">
+        <button class="chip on" data-sim="look">생김새가 비슷한 약</button>
+        <button class="chip" data-sim="ingr">같은 성분 약</button>
+      </div>
+      <div class="bar">
+        <button class="chip ${M.isOtc(r) ? '' : 'on'}" id="simOtc">처방전 없이 살 수 있는 일반의약품만</button>
+        <select class="text" id="simSort"><option value="">${'닮은 순'}</option><option value="price">싼 순 (보험 약가)</option></select>
+      </div>
+      <div class="hint" id="simNote"></div>
+      <div class="list wide" id="simList"></div>
     </div>
     <p class="disclaimer">사진·모양이 같은 다른 약이 있을 수 있습니다. 복용 전 약 봉투·포장의 이름을 확인하고, 궁금한 점은 약사·의사에게 물어보세요.</p>`;
   $('#favBtn').addEventListener('click', (e) => {
@@ -801,6 +824,28 @@ async function showItem(seq) {
     cb.textContent = '기억했습니다'; cb.disabled = true;
     toast('기억했습니다. 내 약에도 저장했어요');
   });
+  // 비슷한 약: 생김새(크기·모양·색·제형) / 같은 성분, 일반의약품만, 싼 순
+  const sim = { mode: 'look', otc: !M.isOtc(r), sort: '' };
+  const drawSim = () => {
+    let list, note;
+    if (sim.mode === 'look') {
+      list = M.similarLook(data.db, r, { otcOnly: sim.otc, limit: 40 }).map((x) => ({ r: x.r, score: x.score }));
+      note = `크기·모양·색·제형이 비슷한 ${sim.otc ? '일반의약품' : '약'}입니다. 생김새가 비슷하다고 효능이 같은 것은 아니에요.`;
+    } else {
+      list = M.sameIngredient(data.db, r, { otcOnly: sim.otc }).map((x) => ({ r: x.r, exact: x.exact }));
+      note = !r.ig && !r.pg ? '이 약은 주성분 정보가 없어 같은 성분 약을 찾을 수 없습니다(데이터 갱신 후 다시 확인).'
+        : `주성분이 같은 ${sim.otc ? '일반의약품' : '약'} ${list.length}개. 같은 성분이라도 함량·용법·첨가물이 다를 수 있으니, 바꿔 드시려면 약사와 상의하세요.`;
+      const cheap = list.filter((x) => x.r.pr).sort((a, b) => a.r.pr - b.r.pr)[0];
+      if (cheap && r.pr && cheap.r.pr < r.pr) note += ` 가장 싼 약은 ${cheap.r.n} (${won(cheap.r.pr)}/${cheap.r.pu || '개'}) — 이 약보다 ${won(r.pr - cheap.r.pr)} 저렴(보험 약가 기준).`;
+    }
+    if (sim.sort === 'price') list = list.slice().sort((a, b) => (a.r.pr ?? 1e12) - (b.r.pr ?? 1e12));
+    $('#simNote').textContent = note;
+    $('#simList').innerHTML = list.length ? list.slice(0, 40).map((x, i) => card(x.r, { num: i + 1, score: x.score })).join('') : `<div class="empty-msg">${sim.otc ? '조건에 맞는 일반의약품이 없습니다. "일반의약품만"을 끄고 보세요.' : '비슷한 약이 없습니다.'}</div>`;
+  };
+  $('#item').querySelectorAll('[data-sim]').forEach((b) => b.addEventListener('click', () => { sim.mode = b.dataset.sim; $('#item').querySelectorAll('[data-sim]').forEach((c) => c.classList.toggle('on', c === b)); drawSim(); }));
+  $('#simOtc').addEventListener('click', (e) => { sim.otc = !sim.otc; e.currentTarget.classList.toggle('on', sim.otc); drawSim(); });
+  $('#simSort').addEventListener('change', (e) => { sim.sort = e.target.value; drawSim(); });
+  setTimeout(drawSim, 0);
   $('#shareBtn').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(location.href); toast('링크를 복사했습니다'); } catch { toast(location.href, 4000); }
   });

@@ -9,7 +9,8 @@ const DB = [
   { s: '5', n: '테스트캡슐', sh: '장방형', c1: '빨강', c2: '노랑', pf: 'CAP', L: 19, W: 7 },
   { s: '6', n: '테스트노랑원형', sh: '원형', c1: '노랑', pf: 'AB', L: 8, W: 8 },
   { s: '7', n: '테스트큰원형', sh: '원형', c1: '하양', pf: 'AB', L: 12, W: 12 },
-  { s: '8', n: '테스트경질약', sh: '장방형', c1: '하양', pf: 'ZZ', L: 18, W: 6.5, f: '경질캡슐제, 산제' },
+  { s: '8', n: '테스트경질약', sh: '장방형', c1: '하양', pf: 'ZZ', L: 18, W: 6.5, f: '경질캡슐제, 산제', o: '전문의약품', ig: 'M000001', pr: 500, pu: '캡슐' },
+  { s: '12', n: '테스트일반캡슐', sh: '장방형', c1: '하양', pf: 'QQ', L: 18.2, W: 6.6, f: '경질캡슐제, 과립제', o: '일반의약품', ig: 'M000001', pr: 300, pu: '캡슐' },
   { s: '9', n: '테스트필름약', sh: '장방형', c1: '하양', pf: 'ZZ', L: 18, W: 6.5, f: '필름코팅정' },
   { s: '11', n: '테스트무각인약', sh: '삼각형', c1: '초록', pf: '', pb: '', L: 14, W: 14, f: '나정' },
   { s: '10', n: '테스트연질약', sh: '타원형', c1: '노랑', pf: 'ZZ', L: 18, W: 9, f: '연질캡슐제, 액상' },
@@ -47,14 +48,14 @@ t('제형: 사진이 경질캡슐 같으면(p 0.9) 같은 모양의 캡슐(8)이
 t('제형: 사진이 캡슐 아니면(p 0.05) 정제(9)가 캡슐(8)보다 위', topOf({ ...base, form: { hard: 0.05 } }) === '9');
 t('제형: 사용자가 정제를 고르면 정제(9)', topOf({ ...base, form: { pick: '정제' } }) === '9');
 t('제형: 사용자가 경질캡슐을 고르면 8', topOf({ ...base, form: { pick: '경질캡슐' } }) === '8');
-t('제형: 애매하면(p 0.5) 순위에 영향 없음(점수 같음)', (() => { const a = M.scoreOne(DB[7], { ...base, form: { hard: 0.5 } }).score, b = M.scoreOne(DB[8], { ...base, form: { hard: 0.5 } }).score; return Math.abs(a - b) < 1e-9; })());
-t('제형 필터: 경질캡슐만 → 8', ids({ forms: ['경질캡슐'] }) === '8');
+t('제형: 애매하면(p 0.5) 순위에 영향 없음(점수 같음)', (() => { const a = M.scoreOne(DB.find((x) => x.s === '8'), { ...base, form: { hard: 0.5 } }).score, b = M.scoreOne(DB.find((x) => x.s === '9'), { ...base, form: { hard: 0.5 } }).score; return Math.abs(a - b) < 1e-9; })());
+t('제형 필터: 경질캡슐만 → 8, 12', ids({ forms: ['경질캡슐'] }) === '8,12');
 t('제형 필터: 연질캡슐만 → 10', ids({ forms: ['연질캡슐'] }) === '10');
 t('제형 묶음: 필름코팅정=정제, 서방성캡슐제=경질캡슐', M.formGroup({ f: '필름코팅정' }) === '정제' && M.formGroup({ f: '서방성캡슐제, 펠렛' }) === '경질캡슐');
 t('세부 제형: 필름코팅정 → 9', ids({ formD: ['필름코팅정'] }) === '9');
 t('세부 제형: 나정 → 11', ids({ formD: ['나정'] }) === '11');
 t('각인 없음 조건 → 각인이 없는 약만(11)', ids({ has: 'none' }) === '11');
-t('각인 있음 조건 → 11 제외', !ids({ has: 'has' }).split(',').includes('11') && ids({ has: 'has' }).split(',').length === 10);
+t('각인 있음 조건 → 11 제외', !ids({ has: 'has' }).split(',').includes('11') && ids({ has: 'has' }).split(',').length === DB.filter(M.hasImprint).length);
 t('보이는 글자만: Y5 → TY500(3)', ids({ imprint: 'Y5' }) === '3');
 t('모르는 글자 ?: T?5 → TY500(3)을 찾고 AB 계열은 제외', ids({ imprint: 'T?5' }).split(',').includes('3') && !ids({ imprint: 'T?5' }).split(',').includes('1'));
 t('모르는 글자 ?: ?Y → TY(3)와 XY(2)', ['2', '3'].every((s) => ids({ imprint: '?Y' }).split(',').includes(s)));
@@ -71,5 +72,11 @@ t('각인 없음 → 각인 없는 약(11)이 위', r[0].r.s === '11');
   t('각인 유무를 안 고르면 모양이 맞는 약(3)이 위', M.rank(pool, o0)[0].r.s === '3');
   t('각인 있음을 고르면 각인 없는 약(11)이 아래', M.rank(pool, { ...o0, has: 'has' })[0].r.s === '3');
 }
+t('비슷한 약: 전문 캡슐(8)과 생김새가 가장 비슷한 일반의약품 → 12', M.similarLook(DB, DB.find((x) => x.s === '8'), { otcOnly: true })[0].r.s === '12');
+t('비슷한 약: 같은 크기라도 제형이 같은 캡슐(12)이 필름정(9)보다 위', (() => { const l = M.similarLook(DB, DB.find((x) => x.s === '8')).map((x) => x.r.s); return l.indexOf('12') < l.indexOf('9'); })());
+t('비슷한 약: 자기 자신은 빠진다', !M.similarLook(DB, DB.find((x) => x.s === '8')).some((x) => x.r.s === '8'));
+t('같은 성분 약: 8 → 12(일반의약품)', M.sameIngredient(DB, DB.find((x) => x.s === '8')).map((x) => x.r.s).join() === '12');
+t('같은 성분 약: 주성분 정보 없으면 빈 목록', M.sameIngredient(DB, DB[0]).length === 0);
+t('구분 필터: 일반의약품만 → 12', ids({ otc: '일반' }) === '12');
 console.log(fail ? `${fail}개 실패` : '모두 통과');
 process.exit(fail ? 1 : 0);

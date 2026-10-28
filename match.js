@@ -224,6 +224,36 @@
     return out.slice(0, limit);
   }
 
+  // ---------- 비슷한 약 ----------
+  const isOtc = (r) => /일반/.test(r.o || '');
+  // 생김새가 비슷한 약: 모양·색·장단축·두께·제형이 가까운 순(이 약 자체는 뺀다). 일반의약품만 고를 수 있다
+  function similarLook(db, r, { otcOnly = false, limit = 40 } = {}) {
+    const obs = {
+      shape: { [r.sh || '기타']: 1 },
+      colors: dbColors(r).slice(0, 2).map((c) => ({ probs: { [c]: 1 } })),
+      aspect: r.L && r.W ? Math.max(r.L, r.W) / Math.min(r.L, r.W) : undefined,
+      mm: r.L ? { long: Math.max(r.L, r.W || 0), short: Math.min(r.L, r.W || r.L) } : null,
+      form: { pick: formGroup(r) },
+    };
+    const out = [];
+    for (const x of db) {
+      if (x.s === r.s || (otcOnly && !isOtc(x))) continue;
+      let { score } = scoreOne(x, obs);
+      if (r.T && x.T) { const d = (x.T - r.T) / (0.1 * r.T + 0.3); score *= 0.85 + 0.15 * Math.exp(-(d * d) / 2); }
+      out.push({ r: x, score });
+    }
+    out.sort((a, b) => b.score - a.score);
+    return out.slice(0, limit);
+  }
+  // 같은 성분 약: 주성분 코드 묶음(ig)이 같으면 같은 성분(함량은 다를 수 있음), 일반명코드(pg, 약가 자료)가 같으면 성분·함량·제형까지 같음
+  function sameIngredient(db, r, { otcOnly = false } = {}) {
+    if (!r.ig && !r.pg) return [];
+    return db
+      .filter((x) => x.s !== r.s && ((r.ig && x.ig === r.ig) || (r.pg && x.pg === r.pg)) && (!otcOnly || isOtc(x)))
+      .map((x) => ({ r: x, exact: !!(r.pg && x.pg === r.pg) }))
+      .sort((a, b) => (b.exact - a.exact) || ((a.r.pr ?? 1e12) - (b.r.pr ?? 1e12)) || a.r.n.localeCompare(b.r.n, 'ko'));
+  }
+
   // ---------- 직접 고르기(칩) 필터 ----------
   // 제형 묶음: 식약처 제형명 → 정제 / 경질캡슐 / 연질캡슐 / 기타 (캡슐이 전체의 20%, 장방형의 절반 이상이라 구분하면 후보가 크게 줄어든다)
   function formGroup(r) {
@@ -238,13 +268,14 @@
   const sizeOk = (dbv, v) => !v || (dbv > 0 && Math.abs(dbv - v) <= sizeTol(v));
   // 세부 제형(식약처 제형명에 들어 있는 말로 찾는다)
   const FORM_DETAIL = { '필름코팅정': /필름코팅/, '나정': /나정/, '서방형': /서방/, '장용형': /장용/, '당의정': /당의/, '구강붕해': /구강붕해/, '츄어블': /추어블|츄어블|저작/, '다층정': /다층/ };
-  function manualFilter({ shapes = [], colors = [], imprint = '', similarColors = true, size = {}, forms = [], formD = [], has = '' } = {}) {
+  function manualFilter({ shapes = [], colors = [], imprint = '', similarColors = true, size = {}, forms = [], formD = [], has = '', otc = '' } = {}) {
     const cset = new Set(similarColors ? colors.flatMap(COLOR_FAMILY) : colors);
     const q = normImprint(imprint);
     return (r) => {
       if (shapes.length && !shapes.includes(r.sh || '기타')) return false;
       if (cset.size && !dbColors(r).some((c) => cset.has(c))) return false;
       if (forms.length && !forms.includes(formGroup(r))) return false;
+      if (otc && !(r.o || '').includes(otc)) return false;
       if (formD.length && !formD.some((k) => FORM_DETAIL[k] && FORM_DETAIL[k].test(r.f || ''))) return false;
       if (!sizeOk(r.L, size.L) || !sizeOk(r.W, size.W) || !sizeOk(r.T, size.T)) return false;
       if (has === 'has' && !hasImprint(r)) return false;
@@ -294,7 +325,7 @@
     return out.slice(0, limit).map((x) => x.r);
   }
 
-  const api = { rank, scoreOne, manualFilter, formGroup, FORM_DETAIL, hasImprint, imprintMatchScore, searchName, normImprint, imprintSim, dbColors, choseong, COLOR_FAMILY, shapeSim, colorSim };
+  const api = { rank, scoreOne, manualFilter, formGroup, FORM_DETAIL, similarLook, sameIngredient, isOtc, hasImprint, imprintMatchScore, searchName, normImprint, imprintSim, dbColors, choseong, COLOR_FAMILY, shapeSim, colorSim };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Match = api;
 })(typeof self !== 'undefined' ? self : this);

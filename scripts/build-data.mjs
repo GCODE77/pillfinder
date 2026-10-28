@@ -21,6 +21,7 @@ let KEY = (process.env.SERVICE_KEY || '').trim();
 // 포털의 "Encoding" 키를 넣어도 이중 인코딩되지 않게 한 번 풀어 둔다.
 if (KEY.includes('%')) KEY = decodeURIComponent(KEY);
 const WITH_PERMIT = process.env.PERMIT !== '0';
+const WITH_PRICE = process.env.PRICE !== '0';
 const LIMIT = Number(process.env.LIMIT || 0);
 const ROWS = 100;
 
@@ -30,17 +31,33 @@ const EP = {
   pill: `${BASE}/MdcinGrnIdntfcInfoService03/getMdcinGrnIdntfcInfoList03`,
   easy: `${BASE}/DrbEasyDrugInfoService/getDrbEasyDrugList`,
   permit: `${BASE}/DrugPrdtPrmsnInfoService08/getDrugPrdtPrmsnDtlInq08`,
+  // 건강보험심사평가원 약가기준정보(보험 상한가). 공공데이터포털에서 따로 활용신청(자동승인) 필요 — 없으면 건너뜀
+  price: 'https://apis.data.go.kr/B551182/dgamtCrtrInfoService1.2/getDgamtList',
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function getPage(endpoint, pageNo, timeout = 30000) {
-  const q = new URLSearchParams({ serviceKey: KEY, type: 'json', pageNo: String(pageNo), numOfRows: String(ROWS) });
+// 심평원 API는 XML로 온다: <item>…</item> 목록을 평범한 객체로
+function xmlItems(text) {
+  const items = [];
+  for (const m of text.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+    const o = {};
+    for (const f of m[1].matchAll(/<(\w+)>([\s\S]*?)<\/\1>/g)) o[f[1]] = f[2].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').trim();
+    items.push(o);
+  }
+  return items;
+}
+
+async function getPage(endpoint, pageNo, timeout = 30000, extra = {}) {
+  const q = new URLSearchParams({ serviceKey: KEY, type: 'json', pageNo: String(pageNo), numOfRows: String(ROWS), ...extra });
   const waits = [2000, 5000, 10000, 20000];
   for (let a = 0; ; a++) {
     try {
       const res = await fetch(`${endpoint}?${q}`, { signal: AbortSignal.timeout(timeout) });
       const text = await res.text();
+      if (text.trimStart().startsWith('<') && /<resultCode>\s*00\s*<\/resultCode>/.test(text)) {
+        return { items: xmlItems(text), total: Number((text.match(/<totalCount>(\d+)/) || [])[1] || 0) };
+      }
       if (text.trimStart().startsWith('<')) {
         // 인증 오류 등은 JSON 요청에도 XML로 온다
         const msg = (text.match(/<returnAuthMsg>([^<]*)/) || text.match(/<resultMsg>([^<]*)/) || [])[1] || text.slice(0, 200);
@@ -66,8 +83,8 @@ async function getPage(endpoint, pageNo, timeout = 30000) {
   }
 }
 
-async function fetchAll(name, endpoint, { concurrency = 6, timeout } = {}) {
-  const first = await getPage(endpoint, 1, timeout);
+async function fetchAll(name, endpoint, { concurrency = 6, timeout, extra } = {}) {
+  const first = await getPage(endpoint, 1, timeout, extra);
   let pages = Math.ceil(first.total / ROWS) || 1;
   if (LIMIT) pages = Math.min(pages, LIMIT);
   console.log(`${name}: ${first.total}건, ${pages}페이지`);
@@ -77,7 +94,7 @@ async function fetchAll(name, endpoint, { concurrency = 6, timeout } = {}) {
   async function worker() {
     while (next <= pages) {
       const p = next++;
-      const { items } = await getPage(endpoint, p, timeout);
+      const { items } = await getPage(endpoint, p, timeout, extra);
       out.push(...items);
       if (++done % 20 === 0) console.log(`  ${name} ${done}/${pages}`);
     }
@@ -133,6 +150,9 @@ function compactPill(r) {
   put('mf', r.MARK_CODE_FRONT_ANAL);
   put('mb', r.MARK_CODE_BACK_ANAL);
   put('en', r.ITEM_ENG_NAME);
+  // 보험코드(EDI): 약가(심평원)와 잇는 열쇠. 여러 개면 앞의 3개까지
+  const ed = String(r.EDI_CODE || '').split(/[,\s]+/).filter((x) => /^\d{9}$/.test(x)).slice(0, 3).join(',');
+  put('ed', ed);
   return o;
 }
 
@@ -181,9 +201,17 @@ async function main() {
     let permit = [];
     try { permit = await fetchAll('허가상세', EP.permit, { concurrency: 4, timeout: 90000 }); }
     catch (e) { console.warn(`::warning::허가상세를 건너뜁니다(전문약 효능·용법 없음): ${e.message}`); }
+    const pillBySeq = new Map(pills.map((p) => [p.s, p]));
     for (const r of permit) {
       const seq = String(r.ITEM_SEQ ?? '');
       if (!seq) continue;
+      // 주성분: [M229415]이토프리드염산염|… → 코드 묶음(같은 성분 찾기용)과 짧은 이름
+      const pp = pillBySeq.get(seq);
+      if (pp && r.MAIN_ITEM_INGR) {
+        const parts = [...String(r.MAIN_ITEM_INGR).matchAll(/\[(M\d+)\]([^|\[]*)/g)];
+        const codes = [...new Set(parts.map((m) => m[1]))].sort();
+        if (codes.length) { pp.ig = codes.join('|'); const nm = parts.map((m) => m[2].trim()).filter(Boolean).join('·'); if (nm) pp.in = nm.length > 60 ? nm.slice(0, 58) + '…' : nm; }
+      }
       const cur = details.get(seq);
       const ingr = pick(r, 'MAIN_ITEM_INGR', 'MATERIAL_NAME');
       const extra = {
@@ -205,6 +233,32 @@ async function main() {
     }
   }
 
+  // 2-1) 보험 약가(상한가): 심평원 약가기준정보. 활용신청 전이면 건너뛴다
+  let priced = 0, priceAt = '';
+  if (WITH_PRICE) {
+    try {
+      const rows = await fetchAll('약가', EP.price, { concurrency: 4, timeout: 60000 });
+      const best = new Map(); // 약품코드 → 가장 최근 적용 행
+      for (const r of rows) {
+        const cd = String(r.mdsCd || '').trim();
+        if (!/^\d{9}$/.test(cd) || /삭제/.test(r.payTpNm || '')) continue;
+        const cur = best.get(cd);
+        if (!cur || String(r.adtStaDd || '') > String(cur.adtStaDd || '')) best.set(cd, r);
+      }
+      for (const p of pills) {
+        if (!p.ed) continue;
+        for (const cd of p.ed.split(',')) {
+          const r = best.get(cd); const v = r && Number(String(r.mxCprc).replace(/,/g, ''));
+          if (!(v > 0)) continue;
+          p.pr = v; p.pu = r.unit || ''; if (r.gnlNmCd) p.pg = r.gnlNmCd; if (r.nomNm) p.pn = r.nomNm;
+          priced++; if (String(r.adtStaDd || '') > priceAt) priceAt = String(r.adtStaDd || '');
+          break;
+        }
+      }
+      console.log(`약가: ${best.size}개 약품코드, 낱알 ${priced}건에 가격`);
+    } catch (e) { console.warn(`::warning::약가를 건너뜁니다(공공데이터포털 '건강보험심사평가원_약가기준정보조회서비스' 활용신청 필요): ${e.message}`); }
+  }
+
   // 3) 쓰기
   writeFileSync(resolve(OUT, 'pills.json'), JSON.stringify(pills));
   rmSync(resolve(OUT, 'details'), { recursive: true, force: true });
@@ -221,7 +275,9 @@ async function main() {
     pills: pills.length,
     details: details.size,
     withPermit: WITH_PERMIT && details.size > easy.length,
-    source: '식품의약품안전처 공공데이터(낱알식별·e약은요·의약품 제품 허가정보), 공공데이터포털',
+    priced, priceAt,
+    withIngr: pills.filter((p) => p.ig).length,
+    source: '식품의약품안전처 공공데이터(낱알식별·e약은요·의약품 제품 허가정보), 건강보험심사평가원 약가기준정보, 공공데이터포털',
   };
   writeFileSync(resolve(OUT, 'meta.json'), JSON.stringify(meta, null, 2));
   console.log(`완료: 낱알 ${pills.length}, 상세 ${details.size} (${Math.round((Date.now() - t0) / 1000)}초)`);
