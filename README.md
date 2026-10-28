@@ -31,7 +31,7 @@
 식품의약품안전처 공공데이터(공공데이터포털)
 - **의약품 낱알식별 정보** `MdcinGrnIdntfcInfoService03` — 약 사진·모양·색·각인·크기 (약 2만 5천 품목)
 - **의약품개요정보(e약은요)** `DrbEasyDrugInfoService` — 일반약의 쉬운 말 효능·사용법·주의사항
-- **의약품 제품 허가정보** `DrugPrdtPrmsnInfoService07` — 전문약 포함 효능효과·용법용량·사용상 주의사항
+- **의약품 제품 허가정보** `DrugPrdtPrmsnInfoService08` — 전문약 포함 효능효과·용법용량·사용상 주의사항
 
 약학정보원(health.kr)은 공개 API가 없어 원문 링크로만 연결합니다.
 
