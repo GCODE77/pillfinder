@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.12.1';
+const APP_VERSION = '1.12.2';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -146,9 +146,9 @@ function card(r, extra = {}) {
   const size = r.L ? `<span class="size"><i>장</i>${r.L} <i>단</i>${r.W || '-'} <i>두께</i>${r.T || '-'} <i>mm</i></span>` : '<span class="size"><i>크기 자료 없음</i></span>';
   const cmpb = extra.key ? '' : `<span class="cmpbtn${cmp.includes(r.s) ? ' on' : ''}" role="button" data-cmp="${esc(r.s)}">${cmp.includes(r.s) ? '비교 ✓' : '비교 +'}</span><span class="detbtn" role="button" data-det="${esc(r.s)}">상세 ›</span>`;
   const why = extra.parts ? Object.entries(extra.parts).map(([k, v]) => `<span class="${v > 0.75 ? 'hi' : ''}">${{ shape: '모양', color: '색', aspect: '비율', size: '크기', imprint: '각인', line: '분할선', blank: '빈면', form: '제형', hasimp: '각인 유무', splitline: '분할선', learned: '내가 확인한 약' }[k]} ${Math.round(v * 100)}</span>`).join('') : '';
-  return `<button class="card${extra.checked ? ' sel' : ''}${cmp.includes(r.s) ? ' cmpsel' : ''}" data-seq="${esc(r.s)}"${extra.key ? ` data-key="${esc(extra.key)}"` : ''}>
+  return `<button class="card${extra.checked ? ' sel' : ''}${cmp.includes(r.s) ? ' cmpsel' : ''}" data-seq="${esc(r.s)}"${extra.key ? ` data-key="${esc(extra.key)}"` : ''}${extra.hk ? ` data-hk="${esc(extra.hk)}"` : ''}>
     ${preCard(extra)}<div class="img">${imgOf(r)}</div>
-    <div class="body"><div class="name">${otcBadge(r)}${esc(r.n)}</div><div class="sub">${esc(r.e)}${r.cl ? ' · ' + esc(r.cl) : ''}</div>
+    <div class="body"><div class="name">${otcBadge(r)}${esc(r.n)}</div><div class="sub">${esc(r.e)}${r.cl ? ' · ' + esc(r.cl) : ''}</div>${extra.when ? `<div class="when">${extra.thumb ? `<img class="mythumb" src="${esc(extra.thumb)}" alt="내가 찍은 사진">` : ''}<span>${esc(extra.when)}</span></div>` : ''}
       <div class="feat">${feat.map((f) => `<span>${f.startsWith('<') ? f : esc(f)}</span>`).join('')}</div><div>${size}${cmpb}</div>${why ? `<div class="why">${why}</div>` : ''}${extra.note ? `<div class="why"><span class="hi">${esc(extra.note)}</span></div>` : ''}</div>
     ${extra.score !== undefined ? `<div class="score">${Math.round(extra.score * 100)}<small>일치</small></div>` : ''}
   </button>`;
@@ -1004,6 +1004,8 @@ function showMine() {
     const r = h.seq && data.bySeq.get(h.seq);
     const when = new Date(h.t).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     const k = histKey(h), sel = mineMode.hist && mineSel.hist.has(k);
+    // 약을 찾았으면 내 약과 같은 카드(사진·모양·색·각인·크기·약가·비교)에 찍은 시각을 붙인다
+    if (r) return card(r, { num: i + 1, hk: k, thumb: h.thumb, when: `${when} 찍음 · 1순위 후보`, ...(mineMode.hist ? { key: k, checked: sel } : {}) });
     return `<button class="card${sel ? ' sel' : ''}" data-hk="${esc(k)}" ${mineMode.hist ? `data-seq="${esc(h.seq || 'x')}" data-key="${esc(k)}"` : r ? `data-seq="${esc(r.s)}"` : ''}>${preCard({ num: i + 1, ...(mineMode.hist ? { key: k, checked: sel } : {}) })}<div class="img"><img src="${h.thumb}" alt=""></div>
       <div class="body"><div class="name">${r ? esc(r.n) : '찾지 못함'}</div><div class="sub">${when} · 1순위 후보</div></div></button>`;
   }).join('') : '<div class="empty-msg">아직 찍어서 찾은 약이 없습니다.</div>';
