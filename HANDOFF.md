@@ -1,7 +1,7 @@
 # 필파인더 — 세션 핸드오프
 
 - 최종 갱신: 2026-10-28
-- 현재 버전: **v1.8.1** — 배포됨: https://gcode77.github.io/pillfinder/ (저장소 GCODE77/pillfinder)
+- 현재 버전: **v1.9.0** — 배포됨: https://gcode77.github.io/pillfinder/ (저장소 GCODE77/pillfinder)
 - 저작권: © GLORY KIM
 - 형제 앱: `../약 계수하기`(필카운터, https://gcode77.github.io/pillcounter/) — 같은 디자인·배포 방식
 
