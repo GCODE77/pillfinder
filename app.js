@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.12.0';
+const APP_VERSION = '1.12.1';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -885,7 +885,7 @@ async function showItem(seq) {
     if (sim.mode === 'size') {
       list = M.sizeAlike(data.db, r, { otcOnly: sim.otc, sameForm: sim.form, sameShape: sim.shape, sameLine: sim.line, limit: 60 }).map((x) => ({
         r: x.r, score: x.score,
-        note: `이 약과 차이 · 장축 ${mmd(x.d.L)}` + (x.d.W !== null ? ` · 단축 ${mmd(x.d.W)}` : '') + (x.d.T !== null ? ` · 두께 ${mmd(x.d.T)}` : r.T ? ' · 두께 자료 없음' : '') + 'mm',
+        note: `차이 · 장축 ${mmd(x.d.L)}` + (x.d.W !== null ? ` · 단축 ${mmd(x.d.W)}` : '') + (x.d.T !== null ? ` · 두께 ${mmd(x.d.T)}` : r.T ? ' · 두께 자료 없음' : '') + 'mm',
       }));
       note = !r.L ? '이 약은 크기 자료가 없어 찾을 수 없습니다.'
         : `기준: ${sizeTxt(r)} · 색·각인은 보지 않고 크기가 가까운 ${sim.otc ? '일반의약품' : '약'} 순서입니다. 조제·분포 시험용 대체약을 고를 때 쓰세요(복용 대체 아님).`;

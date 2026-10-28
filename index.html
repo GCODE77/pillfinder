@@ -203,6 +203,46 @@
   .empty-msg{text-align:center;color:var(--dim);padding:30px 10px;line-height:1.7}
   .fav{background:none;border:1.5px solid var(--line);color:var(--muted);min-height:40px;padding:8px 12px;font-size:14px}
   .fav.on{border-color:var(--primary);color:var(--primary)}
+
+  /* ---- 가시성·가독성: 글자 크기는 그대로, 대비·간격·구분만 ---- */
+  :root{--dim:#aebbd0;--line:#41526b;--edge:#2f3f57}
+  :focus-visible{outline:3px solid #fde68a;outline-offset:2px}
+  h2{border-left:4px solid var(--gold);padding-left:10px;line-height:1.3}
+  .hint{color:#b3c0d4}
+  .chip{border-color:#4a5d7a}
+  .chip.on{font-weight:900;box-shadow:0 0 0 1px var(--primary) inset}
+  .badge.otc{background:#14532d;color:#dcfce7}.badge.etc{background:#4c1d95;color:#f3e8ff}
+  .card{border-color:var(--edge);box-shadow:0 2px 8px rgba(0,0,0,.28);padding:12px 10px;gap:10px}
+  .card:active{background:#243247}
+  .card .body{line-height:1.45}
+  .card .name{margin-bottom:2px}
+  .card .sub{color:#bcc8da}
+  .card .feat{gap:5px 6px;margin-top:6px}
+  .card .feat>span{background:#152033;border:1px solid #2a3a52;border-radius:7px;padding:1px 8px;color:#e2e8f0}
+  .card .feat b{color:#fde047}
+  .card .size{border-color:#52668a;color:#fff;white-space:nowrap;padding:2px 6px}
+  .card .size i{margin-right:1px}
+  .card .score{border-left:1px solid var(--edge);padding-left:6px;width:48px}
+  @media (max-width:480px){.card .img{width:76px;height:56px}.card .feat>span{padding:1px 6px}}
+  .why span{color:#c9d4e5;background:#101a2e;border:1px solid #2a3a52}
+  .why span.hi{color:#bbf7d0;background:#0f2e22;border-color:#14532d}
+  .sinfo{border-bottom:1px solid var(--edge);color:#c3cee0}
+  .simbox{border-top:2px solid var(--edge);padding-top:8px}
+  table.spec th{color:#c9d4e5;padding:9px 10px 9px 0}
+  table.spec td{padding:9px 0;border-bottom:1px solid var(--edge);line-height:1.5;color:#f1f5f9}
+  .doc{background:none;padding:0;margin-top:12px}
+  .doc details{background:var(--panel);border:1px solid var(--edge);border-radius:12px;margin:8px 0;padding:0 14px}
+  .doc details:last-child{border-bottom:1px solid var(--edge)}
+  .doc details[open]{border-color:#a1860a}
+  .doc summary{padding:15px 0}
+  .doc summary::after{color:var(--gold);font-weight:900}
+  .doc .txt{line-height:1.8}
+  .disclaimer{color:#bcc8da;border-top:1px solid var(--edge);padding-top:12px}
+  nav.tabs{border-top-color:#41526b}
+  nav.tabs button.on{background:#2a2410}
+  .cmp .grid3>div{border-bottom-color:var(--edge);padding:9px 8px;line-height:1.45}
+  .cmp .grid3 .same{color:#e2e8f0}
+  .cmp .grid3 .h{color:#c3cee0}
 </style>
 </head>
 <body>
