@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.11.4';
+const APP_VERSION = '1.12.0';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -118,15 +118,21 @@ let cmp = [];
 function renderTray() {
   const tray = $('#cmpTray'), page = (location.hash || '#/cam').split('/')[1] || 'cam';
   document.querySelectorAll('[data-cmp]').forEach((b) => { const on = cmp.includes(b.dataset.cmp); b.classList.toggle('on', on); b.textContent = on ? '비교 ✓' : '비교 +'; });
-  tray.classList.toggle('on', cmp.length > 0 && page !== 'cam' && page !== 'cmp');
+  const inMode = cmp.length > 0 && page !== 'cmp';
+  tray.classList.toggle('on', inMode);
+  document.body.classList.toggle('cmpmode', inMode);
+  document.querySelectorAll('.card[data-seq]').forEach((c) => c.classList.toggle('cmpsel', cmp.includes(c.dataset.seq)));
   const name = (s) => { const r = data.bySeq && data.bySeq.get(s); return r ? r.n.replace(/\(.*$/, '') : s; };
   const NUM = ['①', '②', '③'];
-  tray.innerHTML = `<div class="slots">${cmp.length ? cmp.map((s, i) => `<span>${NUM[i]} ${esc(name(s))}</span>`).join('') : ''}${cmp.length < 2 ? '<span>비교할 약을 하나 더 고르세요</span>' : cmp.length < 3 ? '<span style="color:var(--dim)">하나 더 담으면 3개까지 비교</span>' : ''}</div>
+  tray.innerHTML = `<div class="slots">${cmp.length ? cmp.map((s, i) => `<span>${NUM[i]} ${esc(name(s))}</span>`).join('') : ''}${cmp.length < 2 ? '<span>카드를 누르거나 꾹 눌러 하나 더 고르세요 <small style="color:var(--dim)">(상세는 "상세 ›")</small></span>' : cmp.length < 3 ? '<span style="color:var(--dim)">하나 더 담으면 3개까지 비교</span>' : ''}</div>
     <button class="primary" id="cmpGo" ${cmp.length < 2 ? 'disabled' : ''}>비교하기</button><button class="ghost" id="cmpClr" aria-label="비교 목록 비우기">비우기</button>`;
   $('#cmpGo').onclick = () => { location.hash = '#/cmp/' + cmp.map(encodeURIComponent).join('/'); };
   $('#cmpClr').onclick = () => { cmp = []; renderTray(); };
 }
 function toggleCmp(seq) {
+  // 상세 화면에서 비슷한 약을 처음 담으면, 지금 보고 있는 약을 ①로 같이 담는다("이 약과 비교")
+  const [, pg, cur] = (location.hash || '').split('/');
+  if (pg === 'item' && !cmp.length && cur && decodeURIComponent(cur) !== seq) cmp.push(decodeURIComponent(cur));
   const i = cmp.indexOf(seq);
   if (i >= 0) cmp.splice(i, 1); else { cmp.push(seq); if (cmp.length > 3) cmp.shift(); }
   renderTray();
@@ -138,9 +144,9 @@ function card(r, extra = {}) {
   const feat = [r.sh, /캡슐/.test(fg) && fg, M.dbColors(r).join('·'), printTxt(r) && `<b>${esc(printTxt(r))}</b>`, lineTxt(r) && `분할선 ${lineTxt(r)}`, r.pr && `<span class="price">${esc(priceTxt(r))}</span>`].filter(Boolean);
   // 크기는 비교하기 쉽게 따로 한 줄(장축·단축·두께)
   const size = r.L ? `<span class="size"><i>장</i>${r.L} <i>단</i>${r.W || '-'} <i>두께</i>${r.T || '-'} <i>mm</i></span>` : '<span class="size"><i>크기 자료 없음</i></span>';
-  const cmpb = extra.key ? '' : `<span class="cmpbtn${cmp.includes(r.s) ? ' on' : ''}" role="button" data-cmp="${esc(r.s)}">${cmp.includes(r.s) ? '비교 ✓' : '비교 +'}</span>`;
+  const cmpb = extra.key ? '' : `<span class="cmpbtn${cmp.includes(r.s) ? ' on' : ''}" role="button" data-cmp="${esc(r.s)}">${cmp.includes(r.s) ? '비교 ✓' : '비교 +'}</span><span class="detbtn" role="button" data-det="${esc(r.s)}">상세 ›</span>`;
   const why = extra.parts ? Object.entries(extra.parts).map(([k, v]) => `<span class="${v > 0.75 ? 'hi' : ''}">${{ shape: '모양', color: '색', aspect: '비율', size: '크기', imprint: '각인', line: '분할선', blank: '빈면', form: '제형', hasimp: '각인 유무', splitline: '분할선', learned: '내가 확인한 약' }[k]} ${Math.round(v * 100)}</span>`).join('') : '';
-  return `<button class="card${extra.checked ? ' sel' : ''}" data-seq="${esc(r.s)}"${extra.key ? ` data-key="${esc(extra.key)}"` : ''}>
+  return `<button class="card${extra.checked ? ' sel' : ''}${cmp.includes(r.s) ? ' cmpsel' : ''}" data-seq="${esc(r.s)}"${extra.key ? ` data-key="${esc(extra.key)}"` : ''}>
     ${preCard(extra)}<div class="img">${imgOf(r)}</div>
     <div class="body"><div class="name">${otcBadge(r)}${esc(r.n)}</div><div class="sub">${esc(r.e)}${r.cl ? ' · ' + esc(r.cl) : ''}</div>
       <div class="feat">${feat.map((f) => `<span>${f.startsWith('<') ? f : esc(f)}</span>`).join('')}</div><div>${size}${cmpb}</div>${why ? `<div class="why">${why}</div>` : ''}${extra.note ? `<div class="why"><span class="hi">${esc(extra.note)}</span></div>` : ''}</div>
@@ -150,8 +156,12 @@ function card(r, extra = {}) {
 document.addEventListener('click', (e) => {
   const cb = e.target.closest('[data-cmp]');
   if (cb) { e.preventDefault(); e.stopPropagation(); toggleCmp(cb.dataset.cmp); return; }
+  const dt = e.target.closest('[data-det]');
+  if (dt) { e.preventDefault(); location.hash = '#/item/' + encodeURIComponent(dt.dataset.det); return; }
   const c = e.target.closest('.card[data-seq]');
   if (c && c.dataset.key) { toggleSel(c.dataset.key); return; }
+  // 비교 담는 중에는 카드를 누르면 담기/빼기(상세는 "상세 ›")
+  if (c && document.body.classList.contains('cmpmode')) { toggleCmp(c.dataset.seq); return; }
   if (c) location.hash = '#/item/' + encodeURIComponent(c.dataset.seq);
 });
 
@@ -1020,6 +1030,20 @@ $('#pgMine').addEventListener('pointerdown', (e) => {
 });
 for (const ev of ['pointerup', 'pointercancel', 'pointerleave', 'pointermove']) $('#pgMine').addEventListener(ev, (e) => { if (ev !== 'pointermove' || Math.abs(e.movementX) + Math.abs(e.movementY) > 6) lpCancel(); });
 $('#pgMine').addEventListener('contextmenu', (e) => { if (e.target.closest('#favList .card, #histList .card')) e.preventDefault(); });
+// 그 밖의 목록(약 검색·비슷한 약·카메라 후보)에서는 카드를 꾹 누르면 비교에 담긴다
+let lp2 = null;
+document.addEventListener('pointerdown', (e) => {
+  const c = e.target.closest('.card[data-seq]'); if (!c || e.button > 0 || c.closest('#favList, #histList') || e.target.closest('[data-cmp],[data-det]')) return;
+  clearTimeout(lp2);
+  lp2 = setTimeout(() => {
+    lp2 = null; lpFired = Date.now();
+    toggleCmp(c.dataset.seq);
+    if (navigator.vibrate) navigator.vibrate(30);
+    toast(cmp.includes(c.dataset.seq) ? `비교에 담았어요 (${cmp.length}/3)` : '비교에서 뺐어요');
+  }, 500);
+});
+for (const ev of ['pointerup', 'pointercancel', 'pointerleave', 'pointermove']) document.addEventListener(ev, (e) => { if (ev !== 'pointermove' || Math.abs(e.movementX) + Math.abs(e.movementY) > 6) { clearTimeout(lp2); lp2 = null; } });
+document.addEventListener('contextmenu', (e) => { if (e.target.closest('.card[data-seq]')) e.preventDefault(); });
 // 꾹 누른 직후 따라오는 click은 무시(상세 화면으로 넘어가거나 선택이 바로 풀리지 않게)
 document.addEventListener('click', (e) => { if (Date.now() - lpFired < 600) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
 $('#pgMine').addEventListener('click', (e) => {

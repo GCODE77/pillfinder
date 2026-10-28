@@ -115,6 +115,10 @@
   .card .size{display:inline-block;margin-top:5px;background:#0b1222;border:1px solid var(--line);border-radius:7px;padding:2px 8px;font-size:13.5px;font-weight:800;color:#e2e8f0}
   .card .size i{font-style:normal;color:var(--dim);font-weight:600;margin-right:2px}
   .card .cmpbtn{display:inline-block;margin-top:6px;margin-left:6px;border:1.5px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12.5px;font-weight:800;color:var(--muted);vertical-align:top}
+  .card .detbtn{display:none;margin-top:6px;margin-left:6px;border:1.5px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12.5px;font-weight:800;color:var(--muted);vertical-align:top}
+  body.cmpmode .card .detbtn{display:inline-block}
+  .card.cmpsel{border-color:#22d3ee;background:#10262d}
+  .card{-webkit-touch-callout:none}
   .card .cmpbtn.on{background:#0e3a44;border-color:#22d3ee;color:#a5f3fc}
   #cmpTray{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(76px + env(safe-area-inset-bottom));z-index:40;width:min(560px,94vw);background:#0b1222;border:1.5px solid #22d3ee;border-radius:14px;padding:8px 10px;display:none;gap:8px;align-items:center;box-shadow:0 6px 24px rgba(0,0,0,.5)}
   #cmpTray.on{display:flex}
