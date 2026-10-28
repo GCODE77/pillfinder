@@ -63,10 +63,12 @@
     let [L, a, b] = lab0;
     // 밝고 채도가 낮은 약은 폰 자동 화이트밸런스·차갑거나 따뜻한 조명 때문에 흰색이 푸르거나 누렇게 찍히기 쉽다.
     // 채도가 낮을수록(진짜 하늘색·연노랑 약은 채도가 높다) 색 쏠림으로 보고 중립 쪽으로 당긴다. 푸른/초록 쏠림이 더 흔해서 더 세게
-    if (L > 78) {
-      const C0 = Math.hypot(a, b), k = (b < 0 || a < 0) ? 0.6 : 0.4;
-      const s = 1 - k * Math.exp(-((C0 / 18) ** 2));
-      a *= s; b *= s;
+    if (L > 80) {
+      const C0 = Math.hypot(a, b);
+      const cool = b < 0 || (a < -6 && b < 20);          // 푸르거나 초록빛 쏠림(가장 흔함)
+      const warm = !cool && b >= 0 && a < 6;              // 누런 쏠림(분홍처럼 a가 큰 색은 건드리지 않는다)
+      const k = cool ? 0.8 : warm ? 0.4 : 0;
+      if (k) { const s = 1 - k * Math.exp(-((C0 / 28) ** 2)); a *= s; b *= s; }
     }
     const best = {};
     // 무채색(하양·회색·검정)은 밝기로만 갈리므로 채도가 낮을수록 밝기 차를 무겁게 본다
@@ -78,7 +80,9 @@
     const sigma2 = 2 * 10 * 10;
     let sum = 0;
     const out = {};
-    for (const k of COLORS) { out[k] = Math.exp(-best[k] / sigma2) * Math.pow((COLOR_PRIOR[k] || 50) / 9470, 0.25); sum += out[k]; }
+    // 밝고 옅은 색(L>78, 채도<32)은 조명·화이트밸런스로 색이 틀어지기 쉬워, 식약처에서 훨씬 흔한 색(하양)에 사전 비중을 더 준다
+    const pale = L > 78 && Math.hypot(a, b) < 32;
+    for (const k of COLORS) { out[k] = Math.exp(-best[k] / sigma2) * Math.pow((COLOR_PRIOR[k] || 50) / 9470, pale ? 0.4 : 0.25); sum += out[k]; }
     // 아주 밝고 옅은 색(L>80, 채도<32)은 조명에 따라 하양으로 분류된 약일 수 있다
     const C = Math.hypot(a, b);
     if (L > 80 && C < 32) { const add = sum * 0.6 * Math.exp(-C / 14) * Math.min(1, (L - 80) / 8); out['하양'] += add; sum += add; }
@@ -441,6 +445,8 @@
       }
       return k ? s / k : 0;
     };
+    const sharpMap = new Map(cands.map((c) => [c.id, sharpOf(c)]));
+    const maxSharp = Math.max(1, ...cands.filter((c) => c.area >= n * 0.003).map((c) => sharpMap.get(c.id)));
     const scoreOf = (c) => {
       const dc = Math.hypot(c.cx - W / 2, c.cy - H / 2) / diag;
       // 가장자리에 걸친 것(포장지·손가락·물건)은 크게 감점, 많이 걸칠수록 더
@@ -454,7 +460,9 @@
       // 가까이 찍으면 약이 화면의 절반을 넘기도 한다. 다만 가장자리에 걸치면서 큰 것은 바닥·손일 가능성
       const sizeOk = c.area > n * 0.7 || (c.area > n * 0.3 && c.edge > 0) ? 0.2 : 1;
       const fill = c.area / (bw * bh);                         // 속이 빈 테두리·선 모양 제외
-      const sharp = Math.max(0.1, Math.min(1, (sharpOf(c) - 2) / 2));   // 번진 경계(반사 얼룩·그림자)는 크게 감점
+      // 번진 경계(반사 얼룩·그림자)는 크게 감점: 절대 선명도(약≈3~4, 얼룩≈1~2.3)와 같은 사진 안 가장 또렷한 후보 대비 비율 중 큰 쪽
+      const sv = sharpMap.get(c.id);
+      const sharp = Math.max(Math.max(0.1, Math.min(1, (sv - 2) / 2)), Math.max(0.03, Math.min(1, (sv / maxSharp) ** 3)));
       return c.area * (1 - dc) * cut * shapeOk * sizeOk * sharp * (fill < 0.45 ? 0.3 : 1);
     };
     let order = cands.slice().sort((a, b) => scoreOf(b) - scoreOf(a));
@@ -467,7 +475,7 @@
     order = order.slice(0, 6);
 
     if (!usedEdge && opts.tighten !== false) for (const c of order) tighten(c, lab, dist, L, bgMain.c[0], W, H, th);
-    const objects = order.map((c) => { const o = describe(c, lab, W, H, L, A, B, bgMain.c, opts); o.pre = scoreOf(c); return o; });
+    const objects = order.map((c) => { const o = describe(c, lab, W, H, L, A, B, bgMain.c, opts); o.pre = scoreOf(c); o.sharp = +sharpOf(c).toFixed(2); return o; });
     // 약다운 정도: 볼록하고(손가락·그림자 조각은 0.7대) 모양이 어느 한 종류로 뚜렷한 것(조각은 0.4대). 터치로 고른 경우는 그대로 둔다
     if (!opts.seed) {
       const pillness = (o) => Math.max(0.1, Math.min(1, (o.convex - 0.8) / 0.15)) * Math.max(0.15, Math.min(1, (Math.max(...Object.values(o.shape)) - 0.35) / 0.35));

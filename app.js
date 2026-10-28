@@ -1,8 +1,9 @@
 // 필파인더 화면 로직
 import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
+import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.7.2';
+const APP_VERSION = '1.8.0';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -106,7 +107,7 @@ const preCard = (x) => (x.key ? `<input type="checkbox" class="ck" tabindex="-1"
 function card(r, extra = {}) {
   const fg = M.formGroup(r);
   const feat = [r.sh, /캡슐/.test(fg) && fg, M.dbColors(r).join('·'), printTxt(r) && `<b>${esc(printTxt(r))}</b>`, sizeTxt(r)].filter(Boolean);
-  const why = extra.parts ? Object.entries(extra.parts).map(([k, v]) => `<span class="${v > 0.75 ? 'hi' : ''}">${{ shape: '모양', color: '색', aspect: '비율', size: '크기', imprint: '각인', line: '분할선', blank: '빈면', learned: '내가 확인한 약' }[k]} ${Math.round(v * 100)}</span>`).join('') : '';
+  const why = extra.parts ? Object.entries(extra.parts).map(([k, v]) => `<span class="${v > 0.75 ? 'hi' : ''}">${{ shape: '모양', color: '색', aspect: '비율', size: '크기', imprint: '각인', line: '분할선', blank: '빈면', form: '제형', hasimp: '각인 유무', learned: '내가 확인한 약' }[k]} ${Math.round(v * 100)}</span>`).join('') : '';
   return `<button class="card${extra.checked ? ' sel' : ''}" data-seq="${esc(r.s)}"${extra.key ? ` data-key="${esc(extra.key)}"` : ''}>
     ${preCard(extra)}<div class="img">${imgOf(r)}</div>
     <div class="body"><div class="name">${otcBadge(r)}${esc(r.n)}</div><div class="sub">${esc(r.e)}${r.cl ? ' · ' + esc(r.cl) : ''}</div>
@@ -583,7 +584,12 @@ function renderResult(fresh, noHistory) {
     fillSelect($('#oColor2'), COLOR_LIST, '', o.colors[1] ? `자동 (${cTop(o.colors[1])})` : '없음');
     { const sel = $('#oHas'); sel.innerHTML = '<option value="">자동</option><option value="has">있음 (글자 모름)</option><option value="none">없음</option>'; sel.value = ''; }
     const hp = o.form ? o.form.hard : 0;
+    autoPick = { shape: topShape, form: o.form ? (hp >= 0.5 ? '경질캡슐' : hp >= 0.2 ? '' : '정제') : '' };
     fillSelect($('#oForm'), ['정제', '경질캡슐', '연질캡슐'], '', o.form ? `자동 (${hp >= 0.5 ? '경질캡슐 ' + Math.round(hp * 100) + '%' : hp >= 0.2 ? '불확실' : '정제 같음'})` : '자동');
+    setTimeout(syncTiles, 0);
+    // 색이 애매하면(1등 확률 85% 미만) 상위 두 색을 한 번에 고르게 한다(조명·화이트밸런스로 흰색이 푸르게 찍히는 경우 등)
+    { const pr = o.colors[0].probs, top2 = Object.keys(pr).sort((x, y) => pr[y] - pr[x]).slice(0, 2), box = $('#colorAsk');
+      box.innerHTML = pr[top2[0]] < 0.85 ? `색이 애매해요. 맞는 색을 눌러 주세요: ${top2.map((k) => `<button class="chip" data-color-pick="${k}">${k} ${Math.round(pr[k] * 100)}%</button>`).join(' ')}` : ''; }
     $('#oSize').value = o.mm ? `${o.mm.long.toFixed(1)} x ${o.mm.short.toFixed(1)}` : '';
     const best = o.imprints.slice().sort((a, b) => b.conf - a.conf);
     // 확실한 판독(50% 이상, AI 포함)만 입력칸에 넣는다. 자신 없는 글자는 아래 칩으로만 보여 준다
@@ -631,6 +637,22 @@ const editObs = () => {
   rerank();
 };
 ['#oShape', '#oColor', '#oColor2', '#oForm', '#oHas'].forEach((s) => $(s).addEventListener('change', editObs));
+// 그림으로 고르기: 눌러서 선택칸 값을 바꾸고(다시 누르면 자동), 선택칸과 항상 같은 상태로 보여 준다
+let autoPick = { shape: '', form: '' };
+function syncTiles() {
+  const sv = $('#oShape').value, fv = $('#oForm').value;
+  document.querySelectorAll('#oShapeTiles .tile').forEach((b) => { b.classList.toggle('on', b.dataset.pick === sv); b.classList.toggle('auto', !sv && b.dataset.pick === autoPick.shape); });
+  document.querySelectorAll('#oFormTiles .tile').forEach((b) => { b.classList.toggle('on', b.dataset.pick === fv); b.classList.toggle('auto', !fv && b.dataset.pick === autoPick.form); });
+  $('#autoShapeNote').textContent = sv ? '(직접 고름)' : autoPick.shape ? `(자동: ${autoPick.shape} — 점선)` : '';
+  $('#autoFormNote').textContent = fv ? '(직접 고름)' : autoPick.form ? `(자동 추정: ${autoPick.form} — 점선)` : '';
+}
+$('#oShapeTiles').innerHTML = V.SHAPES.map((s) => shapeTile(s, 'data-pick')).join('');
+$('#oFormTiles').innerHTML = ['정제', '경질캡슐', '연질캡슐'].map((s) => formTile(s, 'data-pick')).join('');
+$('#colorAsk').addEventListener('click', (e) => { const b = e.target.closest('[data-color-pick]'); if (!b) return; $('#oColor').value = b.dataset.colorPick; $('#oColor').dispatchEvent(new Event('change')); toast(`색을 ${b.dataset.colorPick}(으)로 정했어요`); });
+for (const [box, sel] of [['#oShapeTiles', '#oShape'], ['#oFormTiles', '#oForm']]) {
+  $(box).addEventListener('click', (e) => { const b = e.target.closest('[data-pick]'); if (!b) return; const s = $(sel); s.value = s.value === b.dataset.pick ? '' : b.dataset.pick; s.dispatchEvent(new Event('change')); });
+}
+['#oShape', '#oForm'].forEach((s) => $(s).addEventListener('change', syncTiles));
 let editT;
 ['#oImprint', '#oSize'].forEach((s) => $(s).addEventListener('input', () => { clearTimeout(editT); editT = setTimeout(editObs, 250); }));
 $('#reads').addEventListener('click', (e) => { const c = e.target.closest('[data-read]'); if (c) { $('#oImprint').value = c.dataset.read; editObs(); } });
@@ -656,11 +678,11 @@ $('#btnBack').addEventListener('click', () => {
 const filt = { shapes: [], colors: [], forms: [], formD: [], has: '' };
 $('#fHas').innerHTML = '<button class="chip" data-has="has">각인 있음</button><button class="chip" data-has="none">각인 없음</button>';
 $('#fHas').addEventListener('click', (e) => { const b = e.target.closest('[data-has]'); if (!b) return; filt.has = filt.has === b.dataset.has ? '' : b.dataset.has; document.querySelectorAll('#fHas .chip').forEach((c) => c.classList.toggle('on', c.dataset.has === filt.has)); runFilter(); });
-$('#fFormD').innerHTML = Object.keys(M.FORM_DETAIL).map((s) => `<button class="chip" data-formd="${s}">${s}</button>`).join('');
+$('#fFormD').innerHTML = Object.keys(M.FORM_DETAIL).map((s) => formTile(s, 'data-formd')).join('');
 $('#fFormD').addEventListener('click', (e) => { const b = e.target.closest('[data-formd]'); if (!b) return; toggle(filt.formD, b.dataset.formd); b.classList.toggle('on'); runFilter(); });
-$('#fForms').innerHTML = ['정제', '경질캡슐', '연질캡슐'].map((s) => `<button class="chip" data-form="${s}">${s}</button>`).join('');
+$('#fForms').innerHTML = ['정제', '경질캡슐', '연질캡슐'].map((s) => formTile(s, 'data-form')).join('');
 $('#fForms').addEventListener('click', (e) => { const b = e.target.closest('[data-form]'); if (!b) return; toggle(filt.forms, b.dataset.form); b.classList.toggle('on'); runFilter(); });
-$('#fShapes').innerHTML = V.SHAPES.map((s) => `<button class="chip" data-shape="${s}">${s}</button>`).join('');
+$('#fShapes').innerHTML = V.SHAPES.map((s) => shapeTile(s, 'data-shape')).join('');
 $('#fColors').innerHTML = COLOR_LIST.map((c) => `<button class="chip" data-color="${c}"><span class="sw" style="background:${SWATCH[c]}"></span>${c}</button>`).join('');
 const toggle = (arr, v) => { const i = arr.indexOf(v); if (i >= 0) arr.splice(i, 1); else arr.push(v); };
 $('#fShapes').addEventListener('click', (e) => { const b = e.target.closest('[data-shape]'); if (!b) return; toggle(filt.shapes, b.dataset.shape); b.classList.toggle('on'); runFilter(); });
@@ -671,7 +693,7 @@ $('#fSimilar').addEventListener('change', runFilter);
 $('#fReset').addEventListener('click', () => {
   filt.shapes = []; filt.colors = []; filt.forms = []; filt.formD = []; filt.has = '';
   for (const id of ['#q', '#fImprint', '#fL', '#fW', '#fT']) $(id).value = '';
-  document.querySelectorAll('#fHas .chip,#fFormD .chip,#fForms .chip,#fShapes .chip,#fColors .chip').forEach((c) => c.classList.remove('on'));
+  document.querySelectorAll('#pgSearch .on').forEach((c) => c.classList.remove('on'));
   runFilter();
 });
 const numOf = (id) => { const v = parseFloat(String($(id).value).replace(',', '.')); return v > 0 ? v : 0; };

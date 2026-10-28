@@ -10,4 +10,4 @@ for (const f of ['capsule.png', 'finger.png', 'pac-palm.png', 'pac-full.png', 'k
   const p = r.pill; console.log(f.padEnd(14), 'lab', p.colors[0].lab.map((v) => v.toFixed(0)).join(','), '→', top(p.colors[0].probs));
 }
 // 합성: 연한 파랑 / 진짜 파랑 / 하늘색 약은 보정되면 안 됨
-for (const [n, rgb] of [['흰(차가운 조명)', [225, 232, 242]], ['흰(따뜻한 조명)', [244, 238, 218]], ['진짜 연한 하늘색', [170, 205, 240]], ['파랑', [60, 110, 200]], ['연한 노랑', [246, 232, 150]], ['연한 분홍', [244, 204, 210]]]) console.log(n.padEnd(14), 'lab', V.rgb2lab(...rgb).map((v) => v.toFixed(0)).join(','), '→', top(V.colorProbs(V.rgb2lab(...rgb))));
+for (const [n, rgb] of [['흰(차가운 조명)', [225, 232, 242]], ['분홍카드 사진 속 흰 캡슐', [196, 215, 238]], ['흰(따뜻한 조명)', [244, 238, 218]], ['진짜 연한 하늘색', [170, 205, 240]], ['파랑', [60, 110, 200]], ['연한 노랑', [246, 232, 150]], ['연한 분홍', [244, 204, 210]]]) console.log(n.padEnd(14), 'lab', V.rgb2lab(...rgb).map((v) => v.toFixed(0)).join(','), '→', top(V.colorProbs(V.rgb2lab(...rgb))));
