@@ -1,20 +1,22 @@
-// 임시: DUR·회수 API 시험(활용신청 후). 키는 환경변수로만
+// 임시: 회수·판매중지 API 재시험. 키는 환경변수로만
 const KEY = process.env.SERVICE_KEY;
 const B = 'https://apis.data.go.kr/1471000';
-const cand = [];
-for (const op of ['getUsjntTabooInfoList03', 'getPwnmTabooInfoList03', 'getSpcifyAgrdeTabooInfoList03', 'getCpctyAtentInfoList03', 'getMdctnPdAtentInfoList03', 'getOdsnAtentInfoList03', 'getEfcyDplctInfoList03', 'getSeobangjeongPartitnAtentInfoList03'])
-  cand.push(`DURPrdlstInfoService03/${op}`);
-for (const v of ['', '01', '02', '03', '04'])
-  for (const op of ['Item', 'List', 'Info'])
-    for (const sfx of ['', '01', '02', '03', '04'])
-      cand.push(`MdcinRtrvlSleStpgeInfoService${v}/getMdcinRtrvlSleStpge${op}${sfx}`);
+const cand = ['MdcinRtrvlSleStpgeInfoService04/getMdcinRtrvlSleStpgeItem03'];
 for (const u of cand) {
-  const q = new URLSearchParams({ serviceKey: KEY, pageNo: '1', numOfRows: '2', type: 'json' });
-  try {
-    const r = await fetch(`${B}/${u}?${q}`);
-    const t = await r.text();
-    if (r.status === 404 || /NO_OPENAPI_SERVICE_ERROR/.test(t)) continue;
-    console.log('★', u, 'HTTP', r.status, t.replace(/\s+/g, ' ').slice(0, 900));
-  } catch (e) { console.log('실패', u, e.message); }
+  for (const rows of ['2', '1000']) {
+    const q = new URLSearchParams({ serviceKey: KEY, pageNo: '1', numOfRows: rows, type: 'json' });
+    const t = await (await fetch(`${B}/${u}?${q}`)).text();
+    let n = ''; try { const j = JSON.parse(t); n = ` items=${(j.body.items || []).length} total=${j.body.totalCount}`; } catch {}
+    console.log('★', u, 'rows', rows, n, t.replace(/\s+/g, ' ').slice(0, rows === '2' ? 1800 : 200));
+  }
 }
-console.log('끝');
+// DUR: numOfRows 상한 확인
+for (const rows of ['100', '500', '1000', '5000']) {
+  const q = new URLSearchParams({ serviceKey: KEY, pageNo: '1', numOfRows: rows, type: 'json' });
+  const j = JSON.parse(await (await fetch(`${B}/DURPrdlstInfoService03/getPwnmTabooInfoList03?${q}`)).text());
+  console.log('DUR rows', rows, '→ items', (j.body.items || []).length);
+}
+const q = new URLSearchParams({ serviceKey: KEY, pageNo: '1', numOfRows: '2', type: 'json' });
+const j = JSON.parse(await (await fetch(`${B}/DURPrdlstInfoService03/getUsjntTabooInfoList03?${q}`)).text());
+console.log('병용 필드', Object.keys(j.body.items[0]).join(','));
+console.log('병용 샘플', JSON.stringify(j.body.items[0]).slice(0, 1500));
