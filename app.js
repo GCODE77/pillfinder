@@ -2,7 +2,7 @@
 import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -151,6 +151,8 @@ function vision(img, opts, timeout = 15000) {
 // ---------- 카메라 · 실시간 윤곽 ----------
 const video = $('#video'), ovl = $('#ovl');
 let stream = null, live = false, liveBusy = false, seed = null, stableSince = 0, lastLive = null, hist6 = [], capturing = false;
+// 새로 찍기 직후 같은 약이 그대로 있으면 바로 다시 자동 촬영되던 문제 → 약을 옮기거나 치울 때까지 자동 촬영을 잠시 멈춘다
+let autoHold = false, holdRef = null, loopOn = false, frameRetry = 0;
 const small = document.createElement('canvas');
 
 async function camStart() {
@@ -189,8 +191,26 @@ async function camStart() {
   } catch (e) { /* 일부 기기는 play()가 늦게 끝남 — 영상은 그대로 나온다 */ }
   $('#camEmpty').classList.add('hidden');
   showStill(null);
-  live = true; liveLoop();
+  startLive();
   warmUpOcr();
+}
+// 실시간 분석 시작: 루프는 하나만 돌고, 영상이 실제로 흐르는지 확인한다
+function startLive() {
+  live = true; hist6 = []; stableSince = 0;
+  video.play().catch(() => {});
+  if (!loopOn) { loopOn = true; liveLoop(); }
+  watchFrames();
+}
+async function watchFrames() {
+  const t0 = video.currentTime;
+  await new Promise((r) => setTimeout(r, 1200));
+  if (!live || !stream) return;
+  if (video.currentTime !== t0 && !video.paused) { frameRetry = 0; return; }
+  if (frameRetry >= 2) { toast('카메라 화면이 멈췄습니다. 다른 앱에 갔다 오거나 새로고침해 주세요', 5000); return; }
+  frameRetry++;
+  try { await video.play(); } catch (e) { /* 무시 */ }
+  await new Promise((r) => setTimeout(r, 600));
+  if (live && stream && video.currentTime === t0) { camStop(); showStill(null); camStart(); }
 }
 function camStop() { live = false; if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; } }
 const showingStill = () => !!$('#still').getAttribute('src');
@@ -257,7 +277,7 @@ function setRing(t) {
 }
 
 async function liveLoop() {
-  if (!live) return;
+  if (!live) { loopOn = false; return; }
   if (!liveBusy && video.readyState >= 2 && video.videoWidth) {
     liveBusy = true;
     const vwid = video.videoWidth, vhei = video.videoHeight;
@@ -266,23 +286,29 @@ async function liveLoop() {
     const sctx = small.getContext('2d', { willReadFrequently: true });
     sctx.drawImage(video, 0, 0, sw, sh);
     const img = sctx.getImageData(0, 0, sw, sh);
-    const res = await vision(img, { seed, coin: true, face: false }, 4000);
+    let res = null;
+    try { res = await vision(img, { seed, coin: true, face: false }, 4000); } catch (e) { res = null; }
     liveBusy = false;
-    if (!live) return;
+    if (!live) { loopOn = false; return; }
     lastLive = res;
     drawOverlay(res, sw, sh, vwid, vhei);
     liveTags(res, sw);
     // 윤곽이 멈춰 있으면(0.9초) 자동 촬영
-    const good = res.ok && res.pill && !res.pill.cut && res.pill.contrast >= 10 && res.pill.long >= sw * 0.08;
+    const good = !!res && res.ok && res.pill && !res.pill.cut && res.pill.contrast >= 10 && res.pill.long >= sw * 0.08;
     if (good) {
       const p = res.pill, cur = [p.cx / sw, p.cy / sh, p.long / sw, p.short / sw];
+      if (autoHold) {
+        if (!holdRef) holdRef = cur;
+        else if (Math.abs(holdRef[0] - cur[0]) > 0.06 || Math.abs(holdRef[1] - cur[1]) > 0.06 || Math.abs(holdRef[2] - cur[2]) / holdRef[2] > 0.15) { autoHold = false; holdRef = null; hist6 = []; stableSince = 0; }
+      }
       hist6.push(cur); if (hist6.length > 6) hist6.shift();
       const steady = hist6.length >= 4 && hist6.every((h) => Math.abs(h[0] - cur[0]) < 0.02 && Math.abs(h[1] - cur[1]) < 0.02 && Math.abs(h[2] - cur[2]) / cur[2] < 0.06);
       if (steady) { if (!stableSince) stableSince = performance.now(); } else stableSince = 0;
-    } else { hist6 = []; stableSince = 0; }
+    } else { hist6 = []; stableSince = 0; autoHold = false; holdRef = null; }
     const t = stableSince ? (performance.now() - stableSince) / 900 : 0;
-    setRing(settings.auto ? t : 0);
-    if (settings.auto && t >= 1 && !capturing) { stableSince = 0; hist6 = []; capture(); }
+    setRing(settings.auto && !autoHold ? t : 0);
+    if (autoHold && settings.auto && good) $('#liveTags').insertAdjacentHTML('beforeend', '<span class="pill-tag warn">약을 옮기면 자동 촬영 · 지금 찍으려면 촬영 버튼</span>');
+    if (settings.auto && !autoHold && t >= 1 && !capturing) { stableSince = 0; hist6 = []; capture(); }
   }
   requestAnimationFrame(liveLoop);
 }
@@ -351,8 +377,8 @@ function capture() {
 }
 function showStill(canvas) {
   const im = $('#still');
-  if (canvas) { im.src = canvas.toDataURL('image/jpeg', 0.85); im.classList.remove('hidden'); video.classList.add('hidden'); $('#guideBox').classList.add('hidden'); }
-  else { im.removeAttribute('src'); im.classList.add('hidden'); video.classList.remove('hidden'); $('#guideBox').classList.remove('hidden'); }
+  if (canvas) { im.src = canvas.toDataURL('image/jpeg', 0.85); im.classList.remove('hidden'); video.style.visibility = 'hidden'; $('#guideBox').classList.add('hidden'); }
+  else { im.removeAttribute('src'); im.classList.add('hidden'); video.style.visibility = ''; $('#guideBox').classList.remove('hidden'); }
 }
 function busy(on, text) { $('#busy').classList.toggle('on', !!on); if (text) $('#busyText').textContent = text; }
 
@@ -427,7 +453,10 @@ function resetCam() {
   sides = []; obsEdit = null; seed = null; pendingBack = false;
   $('#result').classList.add('hidden'); $('#resultIntro').classList.remove('hidden');
   showStill(null);
-  if (stream) { live = true; liveLoop(); } else camEnter();
+  autoHold = true; holdRef = null; frameRetry = 0;
+  window.scrollTo({ top: 0 });
+  if (stream) startLive();
+  else { camEnter(); if (!store.get('pf.camOk', false)) $('#camEmpty').classList.remove('hidden'); }
 }
 
 // 사진들에서 뽑은 특징 → 매칭용 obs
@@ -559,7 +588,9 @@ $('#btnBack').addEventListener('click', () => {
   pendingBack = true; seed = null;
   toast('약을 뒤집어서 비춰 주세요');
   showStill(null);
-  if (stream) { live = true; liveLoop(); } else if (store.get('pf.camOk', false)) camStart(); else $('#file').click();
+  autoHold = true; holdRef = null; frameRetry = 0;
+  window.scrollTo({ top: 0 });
+  if (stream) startLive(); else if (store.get('pf.camOk', false)) camStart(); else $('#file').click();
 });
 
 // ---------- 약 검색 (이름 · 각인 · 크기 · 모양 · 색 — 아는 것만 넣으면 된다) ----------
@@ -770,6 +801,32 @@ $('#sModel').addEventListener('change', (e) => { settings.aiModel = e.target.val
 
 // ---------- 시작 ----------
 $('#ver').textContent = 'v' + APP_VERSION;
+
+// ---------- 앱 설치 · 전체화면 ----------
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches || navigator.standalone === true;
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const de = document.documentElement;
+function syncTopBtns() {
+  $('#btnInstall').classList.toggle('hidden', isStandalone());
+  $('#btnFull').classList.toggle('hidden', !(de.requestFullscreen || de.webkitRequestFullscreen) || isIOS);
+  $('#btnFull').textContent = (document.fullscreenElement || document.webkitFullscreenElement) ? '전체화면 해제' : '전체화면';
+}
+$('#btnInstall').addEventListener('click', async () => {
+  const ev = window.__bip;
+  if (ev) { ev.prompt(); try { await ev.userChoice; } catch (e) { /* 무시 */ } window.__bip = null; syncTopBtns(); return; }
+  toast(isIOS ? 'Safari 아래 공유 버튼 → "홈 화면에 추가"를 누르세요' : '브라우저 메뉴(≡ 또는 ⋮) → "앱 설치" 또는 "홈 화면에 추가"를 누르세요', 6000);
+});
+window.addEventListener('appinstalled', () => { window.__bip = null; toast('설치했습니다. 홈 화면에서 열어 보세요'); syncTopBtns(); });
+$('#btnFull').addEventListener('click', async () => {
+  try {
+    if (document.fullscreenElement || document.webkitFullscreenElement) await (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    else await (de.requestFullscreen || de.webkitRequestFullscreen).call(de, { navigationUI: 'hide' });
+  } catch (e) { toast('이 브라우저에서는 전체화면을 쓸 수 없습니다. 앱으로 설치하면 주소창 없이 열립니다', 4500); }
+});
+document.addEventListener('fullscreenchange', syncTopBtns);
+document.addEventListener('webkitfullscreenchange', syncTopBtns);
+matchMedia('(display-mode: standalone)').addEventListener?.('change', syncTopBtns);
+syncTopBtns();
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 loadData();
 syncShared();

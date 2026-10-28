@@ -8,6 +8,8 @@
 <meta name="author" content="GLORY KIM">
 <meta name="description" content="필파인더 — 카메라로 약을 비추면 모양·색·각인으로 무슨 약인지 찾아 주는 앱. 이름 검색과 효능·용법·주의사항까지.">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<script>window.__bip=null;addEventListener("beforeinstallprompt",function(e){e.preventDefault();window.__bip=e;});</script>
 <meta name="apple-mobile-web-app-title" content="필파인더">
 <link rel="preconnect" href="https://cdn.jsdelivr.net">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
@@ -28,6 +30,8 @@
   header.top .brand{display:flex;align-items:center;gap:10px}
   header.top img{width:32px;height:32px;border-radius:8px}
   header.top h1{font-size:20px;margin:0;letter-spacing:-.3px}
+  .topbtns{display:flex;gap:6px;flex:none}
+  .topbtns .chip{min-height:34px;padding:5px 11px;font-size:13.5px}
   header.top .ver{font-size:12px;color:var(--dim);font-weight:600}
   .hidden{display:none!important}
   section.page{display:none}
@@ -166,8 +170,8 @@
 <body>
 <div class="app">
   <header class="top">
-    <div class="brand"><img src="icons/icon-192.png" alt=""><div><h1>필파인더</h1><div class="ver" id="ver"></div></div></div>
-    <div class="hint" id="dbInfo"></div>
+    <div class="brand"><img src="icons/icon-192.png" alt=""><div><h1>필파인더</h1><div class="ver"><span id="ver"></span> · <span id="dbInfo"></span></div></div></div>
+    <div class="topbtns"><button class="chip hidden" id="btnInstall">앱 설치</button><button class="chip hidden" id="btnFull">전체화면</button></div>
   </header>
   <div id="dataBanner" class="banner hidden"></div>
 
