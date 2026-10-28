@@ -482,25 +482,29 @@
       objects.sort((a, b) => b.pre * pillness(b) - a.pre * pillness(a));
     }
 
-    // 5) 기준 동전: 약보다 크고, 동그랗고, 은색/구리색인 것
-    let coin = null, pill = objects[0];
-    // 카드(신용·교통카드 85.6×54mm): 약보다 훨씬 크고, 모서리 둥근 직사각형이고, 가로세로비 1.58 안팎. 동전보다 우선(두 변으로 크기를 재서 더 정확)
+    // 5) 기준 물체: 카드(신용·교통카드 85.6×54mm)와 동전(원형 금속색) — 하나만 있어도, 둘 다 있어도 된다
+    //    카드: 약보다 훨씬 크고, 모서리 둥근 직사각형이고, 가로세로비 1.58 안팎(두 변으로 재서 정확)
+    //    동전: 둥글고 금속색(은색은 흰 약보다 어둡다, 구리색 10원은 갈색 계열), 약보다 큼
+    //    coin = 주 기준(카드가 있으면 카드), coin2 = 둘 다 있을 때 나머지 기준(앱이 두 값을 평균)
+    let coin = null, coin2 = null, pill = objects[0];
     if (opts.coin !== false && objects.length >= 2) {
       const isCardLike = (o) => !o.cut && o.aspect > 1.45 && o.aspect < 1.75 && o.area / (o.long * o.short) > 0.9 && o.short > 0 && o.long / Math.max(1, Math.sqrt(W * H)) > 0.2;
-      const cardC = objects.filter(isCardLike).sort((x, y) => y.area - x.area)[0];
-      if (cardC) {
-        const p = objects.filter((o) => o !== cardC)[0];   // 순위가 가장 높은(약다운) 나머지 물체
-        if (p && cardC.area > p.area * 2.5 && !p.cut) { coin = Object.assign(cardC, { kind: 'card', mmLong: 85.6, mmShort: 53.98 }); pill = opts.seed ? (objects[0] === cardC ? p : objects[0]) : p; }
-      }
-    }
-    if (!coin && opts.coin !== false && objects.length >= 2) {
-      // 동전: 둥글고, 금속색(은색은 흰 약보다 어둡다, 구리색 10원은 갈색 계열)
       const isCoinLike = (o) => o.aspect < 1.08 && o.shape.원형 > 0.45 && o.chroma < 26 && o.colors[0].lab[0] < 80;
-      const cc = objects.filter(isCoinLike).sort((a, b) => b.area - a.area)[0];
+      const cardC = objects.filter(isCardLike).sort((x, y) => y.area - x.area)[0] || null;
+      const rest = objects.filter((o) => o !== cardC);
+      let coinC = null;
+      const cc = rest.filter(isCoinLike).sort((x, y) => y.area - x.area)[0];
       if (cc) {
-        const others = objects.filter((o) => o !== cc);
-        const p = others[0];
-        if (p && cc.area > p.area * 1.15 && p.area > cc.area * 0.08 && !p.cut) { coin = cc; pill = opts.seed ? (objects[0] === cc ? p : objects[0]) : p; }
+        const p = rest.filter((o) => o !== cc)[0];   // 순위가 가장 높은(약다운) 나머지 물체
+        if (p && cc.area > p.area * 1.15 && p.area > cc.area * 0.08 && !p.cut) coinC = cc;
+      }
+      const pillC = rest.filter((o) => o !== coinC)[0];
+      const cardOk = !!(cardC && pillC && cardC.area > pillC.area * 2.5 && !pillC.cut);
+      if (cardOk) { coin = Object.assign(cardC, { kind: 'card', mmLong: 85.6, mmShort: 53.98 }); coin2 = coinC; }
+      else if (coinC) coin = coinC;
+      if (coin) {
+        const isRef = (o) => o === coin || o === coin2;
+        pill = opts.seed ? (isRef(objects[0]) ? pillC : objects[0]) : pillC;
       }
     }
 
@@ -520,7 +524,7 @@
     return {
       ok: true, W, H, th, usedEdge, bgs: bgCl.map((c) => ({ lab: c.c, n: c.n / samples.length })),
       bg: { lab: bgMain.c, chroma: Math.hypot(bgMain.c[1], bgMain.c[2]) },
-      pill, coin, objects,
+      pill, coin, coin2, objects,
       contrast: pill ? pill.contrast : 0,
       crop,
     };

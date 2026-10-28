@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.8.1';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -33,10 +33,14 @@ async function syncShared() {
 }
 
 // 기준 물체(동전 또는 카드)로 약 크기를 mm로 환산. 카드는 두 변(85.6×54mm)의 평균 배율을 쓴다
-function mmFrom(pill, ref) {
-  const u = ref.kind === 'card' ? (85.6 / ref.long + 53.98 / ref.short) / 2 : Number(settings.coin) / ref.long;
+function mmFrom(pill, res) {
+  const scale = (ref) => (ref.kind === 'card' ? (85.6 / ref.long + 53.98 / ref.short) / 2 : Number(settings.coin) / ref.long);
+  const us = [res.coin, res.coin2].filter(Boolean).map(scale);
+  const u = us.reduce((s, x) => s + x, 0) / us.length;
   return { long: pill.long * u, short: pill.short * u };
 }
+// 쓴 기준 이름: 카드 / 동전 / 카드·동전
+const refLabel = (res) => (res.coin2 ? '카드·동전' : res.coin && res.coin.kind === 'card' ? '카드' : '동전');
 
 function toast(msg, ms = 2400) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('on');
@@ -257,6 +261,12 @@ function drawGuides(ctx, f, vw, vh, res) {
     const rx = X(cx0), ry = Y(cy0), rw = cw * S, rh = chH * vh * f.s, rr = rw * 0.05;
     ctx.moveTo(rx + rr, ry); ctx.arcTo(rx + rw, ry, rx + rw, ry + rh, rr); ctx.arcTo(rx + rw, ry + rh, rx, ry + rh, rr); ctx.arcTo(rx, ry + rh, rx, ry, rr); ctx.arcTo(rx, ry, rx + rw, ry, rr); ctx.closePath(); ctx.stroke();
     label(found ? '카드 인식됨 ✓' : '카드(선택)', rx + rw / 2, ry + rh / 2 + 4, col);
+    // 동전 가이드(카드 대신 또는 함께): 같은 거리에서 카드 가로 길이의 24/85.6 크기
+    const coinFound = !!(res && ((res.coin && res.coin.kind !== 'card') || res.coin2));
+    const ccol = coinFound ? '#4ade80' : 'rgba(125,211,252,.85)', cr = (rw * (Number(settings.coin) / 85.6)) / 2;
+    const ccx = land ? rx + rw / 2 : X(0.84), ccy = land ? Math.min(ry + rh + cr + 0.03 * vh * f.s, Y(0.95) - cr) : Y(0.28);
+    ctx.strokeStyle = ccol; ctx.beginPath(); ctx.arc(ccx, ccy, cr, 0, 7); ctx.stroke();
+    label(coinFound ? '동전 ✓' : '동전', ccx, ccy + 4, ccol);
     const px = land ? 0.30 : 0.5, py = land ? 0.5 : 0.28, pr = (land ? 0.16 : 0.2) * S;
     ctx.strokeStyle = 'rgba(250,204,21,.7)'; ctx.beginPath(); ctx.arc(X(px), Y(py), pr, 0, 7); ctx.stroke();
     label('약', X(px), Y(py) + 4, '#fde68a');
@@ -278,8 +288,9 @@ function drawOverlay(res, sw, sh, srcW, srcH) {
     o.outline.forEach(([x, y], i) => { const X = f.ox + (x + 0.5) * k * f.s, Y = f.oy + (y + 0.5) * k * f.s; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
     ctx.closePath(); ctx.setLineDash(dash || []); ctx.lineWidth = width; ctx.strokeStyle = color; ctx.stroke();
   };
-  for (const o of res.objects) if (o !== res.pill && o !== res.coin) draw(o, 'rgba(203,213,225,.4)', 1, [5, 5]);
+  for (const o of res.objects) if (o !== res.pill && o !== res.coin && o !== res.coin2) draw(o, 'rgba(203,213,225,.4)', 1, [5, 5]);
   if (res.coin) draw(res.coin, '#7dd3fc', 1.5, [8, 5]);
+  if (res.coin2) draw(res.coin2, '#7dd3fc', 1.5, [8, 5]);
   if (res.pill) {
     ctx.shadowColor = 'rgba(0,0,0,.55)'; ctx.shadowBlur = 4;
     draw(res.pill, '#facc15', 1.6);
@@ -298,8 +309,8 @@ function liveTags(res, srcW) {
   const p = res.pill, tags = [];
   tags.push(`<span class="pill-tag"><b>${esc(p.shapeTop)}</b> · ${esc(p.colorTop.join('/'))} · 비율 ${p.aspect.toFixed(2)}</span>`);
   if (res.coin) {
-    const m = mmFrom(p, res.coin);
-    tags.push(`<span class="pill-tag">${res.coin.kind === 'card' ? '카드' : '동전'} 기준 <b>장 ${m.long.toFixed(1)} · 단 ${m.short.toFixed(1)}mm</b></span>`);
+    const m = mmFrom(p, res);
+    tags.push(`<span class="pill-tag">${refLabel(res)} 기준 <b>장 ${m.long.toFixed(1)} · 단 ${m.short.toFixed(1)}mm</b></span>`);
   }
   if (p.cut) tags.push('<span class="pill-tag warn">약이 화면 밖으로 잘렸어요</span>');
   else if (p.contrast < 12) tags.push('<span class="pill-tag warn">바닥과 색이 비슷해요 — 다른 색 바닥에</span>');
@@ -491,7 +502,7 @@ async function identify(canvas) {
     capturing = false;
   }
 }
-const stripRes = (r) => ({ pill: r.pill, coin: r.coin && { long: r.coin.long, short: r.coin.short, kind: r.coin.kind }, bg: r.bg });
+const stripRes = (r) => ({ pill: r.pill, coin: r.coin && { long: r.coin.long, short: r.coin.short, kind: r.coin.kind }, coin2: r.coin2 && { long: r.coin2.long, short: r.coin2.short }, bg: r.bg });
 
 function resetCam() {
   sides = []; zoomSide = null; obsEdit = null; seed = null; pendingBack = false; pendingZoom = false; zoomMode = false;
@@ -514,7 +525,7 @@ function autoObs() {
   let mm = null;
   const withCoin = sides.filter((s) => s.res.coin);
   if (withCoin.length) {
-    const ms = withCoin.map((s) => mmFrom(s.res.pill, s.res.coin));
+    const ms = withCoin.map((s) => mmFrom(s.res.pill, s.res));
     mm = { long: ms.reduce((a, m) => a + m.long, 0) / ms.length, short: ms.reduce((a, m) => a + m.short, 0) / ms.length };
   }
   const imprints = [];
@@ -575,7 +586,7 @@ function renderResult(fresh, noHistory) {
   const p0 = sides[0].res.pill;
   $('#thumbs').innerHTML = sides.map((s, i) => `<div style="text-align:center"><img src="${s.thumb}" alt=""><div class="hint">${i ? '뒷면' : '앞면'}</div></div>`).join('') +
     (zoomSide ? `<div style="text-align:center"><img src="${zoomSide.thumb}" alt=""><div class="hint">확대</div></div>` : '') +
-    `<div class="hint" style="flex:1;margin-left:4px">영상 분석: <b>${esc(p0.shapeTop)}</b> ${Math.round(p0.shape[p0.shapeTop] * 100)}% · ${esc(p0.colorTop.join('/'))} · 비율 ${o.aspect.toFixed(2)}${o.mm ? ` · ${sides.find((s) => s.res.coin) && sides.find((s) => s.res.coin).res.coin.kind === 'card' ? '카드' : '동전'} 기준 ${o.mm.long.toFixed(1)}×${o.mm.short.toFixed(1)}mm` : ''}${sides.some((s) => s.ai) ? '<br>AI 판독 포함' : ''}</div>`;
+    `<div class="hint" style="flex:1;margin-left:4px">영상 분석: <b>${esc(p0.shapeTop)}</b> ${Math.round(p0.shape[p0.shapeTop] * 100)}% · ${esc(p0.colorTop.join('/'))} · 비율 ${o.aspect.toFixed(2)}${o.mm ? ` · ${refLabel((sides.find((s) => s.res.coin) || sides[0]).res)} 기준 ${o.mm.long.toFixed(1)}×${o.mm.short.toFixed(1)}mm` : ''}${sides.some((s) => s.ai) ? '<br>AI 판독 포함' : ''}</div>`;
   if (fresh) {
     const topShape = Object.keys(o.shape).reduce((a, b) => (o.shape[a] >= o.shape[b] ? a : b));
     fillSelect($('#oShape'), V.SHAPES, '', `자동 (${topShape})`);

@@ -81,6 +81,30 @@ for (const [name, cardAng, pillType] of [['카드 반듯', 0, 'oblong'], ['카�
   rows.push(`${ok ? 'OK  ' : 'FAIL'} ${name.padEnd(14)} → 기준 ${kind}, 약 장축 ${mm.toFixed(2)}mm (기대 11)`);
 }
 
+// 카드 + 동전이 함께 있을 때: 둘 다 기준으로 잡고, 두 값을 평균해도 11mm 근처
+{
+  total++;
+  const pxPerMm = 3.4;
+  const img = make(640, 480, {
+    bg: [46, 48, 54],
+    objs: [
+      { type: 'oblong', cx: 160, cy: 150, long: 85.6 * pxPerMm, short: 53.98 * pxPerMm, angle: 0.08, color: [150, 70, 70] },
+      { type: 'circle', cx: 160, cy: 395, long: 24 * pxPerMm, short: 24 * pxPerMm, angle: 0, color: [190, 190, 186] },
+      { type: 'oblong', cx: 480, cy: 240, long: 11 * pxPerMm, short: 5.5 * pxPerMm, angle: 0.4, color: WHITE },
+    ],
+  });
+  const r = V.analyze(img, {});
+  let ok = false, info = '기준 못 찾음';
+  if (r.coin && r.coin.kind === 'card' && r.coin2) {
+    const uCard = (85.6 / r.coin.long + 53.98 / r.coin.short) / 2, uCoin = 24 / r.coin2.long;
+    const mmC = r.pill.long * uCard, mmK = r.pill.long * uCoin, mmAvg = (mmC + mmK) / 2;
+    ok = Math.abs(mmC - 11) < 0.8 && Math.abs(mmK - 11) < 0.8 && Math.abs(mmAvg - 11) < 0.6 && r.pill.long < r.coin2.long * 0.6;
+    info = `카드 ${mmC.toFixed(2)} / 동전 ${mmK.toFixed(2)} / 평균 ${mmAvg.toFixed(2)}mm`;
+  }
+  if (!ok) fail++;
+  rows.push(`${ok ? 'OK  ' : 'FAIL'} 카드+동전 동시     → ${info} (기대 11)`);
+}
+
 // 빈 바닥: 아무것도 찾으면 안 됨
 {
   total++;
