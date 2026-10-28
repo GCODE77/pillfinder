@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.8.1';
+const APP_VERSION = '1.8.2';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -40,7 +40,9 @@ function mmFrom(pill, res) {
   return { long: pill.long * u, short: pill.short * u };
 }
 // 쓴 기준 이름: 카드 / 동전 / 카드·동전
-const refLabel = (res) => (res.coin2 ? '카드·동전' : res.coin && res.coin.kind === 'card' ? '카드' : '동전');
+// 설정의 기준 동전 이름(10·50·100·500원)
+const coinName = () => ({ 18: '10원', 21.6: '50원', 24: '100원', 26.5: '500원' }[Number(settings.coin)] || '동전');
+const refLabel = (res) => (res.coin2 ? `카드·${coinName()}` : res.coin && res.coin.kind === 'card' ? '카드' : coinName());
 
 function toast(msg, ms = 2400) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('on');
@@ -266,7 +268,7 @@ function drawGuides(ctx, f, vw, vh, res) {
     const ccol = coinFound ? '#4ade80' : 'rgba(125,211,252,.85)', cr = (rw * (Number(settings.coin) / 85.6)) / 2;
     const ccx = land ? rx + rw / 2 : X(0.84), ccy = land ? Math.min(ry + rh + cr + 0.03 * vh * f.s, Y(0.95) - cr) : Y(0.28);
     ctx.strokeStyle = ccol; ctx.beginPath(); ctx.arc(ccx, ccy, cr, 0, 7); ctx.stroke();
-    label(coinFound ? '동전 ✓' : '동전', ccx, ccy + 4, ccol);
+    label(coinFound ? `${coinName()} ✓` : coinName(), ccx, ccy + 4, ccol);
     const px = land ? 0.30 : 0.5, py = land ? 0.5 : 0.28, pr = (land ? 0.16 : 0.2) * S;
     ctx.strokeStyle = 'rgba(250,204,21,.7)'; ctx.beginPath(); ctx.arc(X(px), Y(py), pr, 0, 7); ctx.stroke();
     label('약', X(px), Y(py) + 4, '#fde68a');
