@@ -127,7 +127,7 @@ node tests/make-demo.js              # 데모 데이터 다시 만들기
 - **일반의약품만**: 약 검색 '구분' 칩(일반/전문), 카메라 결과 '닮은 약' 위 칩, 비슷한 약 목록.
 - **데이터 빌드 추가**: 낱알 `EDI_CODE` → `ed`, 허가상세 `MAIN_ITEM_INGR` → `ig`(코드 묶음)·`in`(이름). 심평원 **약가기준정보**(`https://apis.data.go.kr/B551182/dgamtCrtrInfoService1.2/getDgamtList`, XML: mdsCd·mxCprc·unit·gnlNmCd·payTpNm·adtStaDd·spcGnlTpNm) → `pr`(상한가, 원)·`pu`(단위)·`pg`·`pn`(규격). **활용신청 필요**(자동승인, data.go.kr/data/15054445). 승인 전엔 경고만 남기고 건너뜀. meta에 `priced`, `priceAt`, `withIngr`.
 - 약가는 **건강보험 상한가**이며 실제 약국 판매가·본인부담과 다르다. 일반의약품은 대부분 비급여라 공식 가격이 없다(앱에 그렇게 표시).
-- 워크플로 수동 실행 `fresh=true`면 이번 주 캐시를 무시하고 새로 받는다(약가 승인 직후). 캐시 키 `mfds-data-v4-<주>`. 빌드 스크립트 `OUT_DIR` 환경변수로 출력 위치를 바꿀 수 있다.
+- 워크플로 수동 실행 `fresh=true`면 이번 주 캐시를 무시하고 새로 받는다(약가 승인 직후). 캐시 키 `mfds-data-v5-<주>`(같은 키는 덮어쓸 수 없어서, 데이터 내용을 바꾸는 수정 때는 번호를 올려야 새 데이터가 저장된다). 빌드 스크립트 `OUT_DIR` 환경변수로 출력 위치를 바꿀 수 있다.
 
 ## 15. v1.9.1 조제 테스트용 대체약 (2026-10-28)
 

@@ -42,7 +42,7 @@ jobs:
         if: ${{ !inputs.fresh }}
         with:
           path: data
-          key: mfds-data-v4-${{ steps.week.outputs.w }}
+          key: mfds-data-v5-${{ steps.week.outputs.w }}
       - name: 식약처 데이터 받기
         id: data
         if: steps.cache.outputs.cache-hit != 'true'
@@ -57,7 +57,7 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true' && steps.data.outcome == 'success'
         with:
           path: data
-          key: mfds-data-v4-${{ steps.week.outputs.w }}
+          key: mfds-data-v5-${{ steps.week.outputs.w }}
       - name: 올릴 파일 고르기
         run: |
           mkdir -p _site
