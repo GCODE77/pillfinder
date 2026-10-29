@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.15.0';
+const APP_VERSION = '1.15.1';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -968,7 +968,7 @@ function renderDur(box, seq, dur) {
   const rows = [];
   if (split) rows.push(['분할 주의', '쪼개거나 부수지 마세요' + (split !== '1' && split !== '분할 주의' ? ` (${split})` : ''), 'warn']);
   for (const [k, label, lv] of [['pw', '임부 금기', 'bad'], ['ag', '연령 금기', 'bad'], ['od', '노인 주의', 'warn'], ['cp', '용량 주의', 'warn'], ['md', '투여기간 주의', 'warn'], ['ef', '효능군 중복', 'info']]) {
-    const t = [...new Set(ings.map((o) => o[k]).filter(Boolean))].filter((x) => x !== '1');
+    const t = [...new Set(ings.map((o) => o[k] && o[k].replace(/^["“”'\s]+|["“”'\s]+$/g, '')).filter(Boolean))].filter((x) => x !== '1');
     if (ings.some((o) => o[k])) rows.push([label, k === 'ef' ? `${t.join(', ')} 계열 — 같은 계열 약과 함께 먹으면 효과가 겹칠 수 있어요` : t.join(' / '), lv]);
   }
   const co = new Map();
