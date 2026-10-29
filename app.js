@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.16.0';
+const APP_VERSION = '1.17.0';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -56,11 +56,12 @@ const data = { db: [], bySeq: new Map(), meta: null, ready: false, shards: new M
 
 async function loadData() {
   try {
-    const [meta, db] = await Promise.all([
+    const [meta, db, rc] = await Promise.all([
       fetch(BASE + 'meta.json', { cache: 'no-cache' }).then((r) => { if (!r.ok) throw 0; return r.json(); }),
       fetch(BASE + 'pills.json').then((r) => { if (!r.ok) throw 0; return r.json(); }),
+      fetch(BASE + 'recall.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),   // 회수·판매중지(없어도 앱은 동작)
     ]);
-    data.meta = meta; data.db = db;
+    data.meta = meta; data.db = db; data.recall = (rc && rc.items) || {}; data.recallAt = rc && rc.at;
     for (const r of db) data.bySeq.set(r.s, r);
     data.ready = true;
     const d = new Date(meta.updated), age = Math.floor((Date.now() - d) / 864e5);
@@ -111,7 +112,7 @@ const imgOf = (r, big) => (r.img ? `<img src="${esc(r.img)}" alt="" loading="laz
 // 허가 상태(취하·유효기간만료 등)·수입·마약류·희귀 표시: 허가정보에서 온 값이라 데이터를 새로 받아야 생긴다
 const statTxt = (r) => (r.st ? `허가 ${r.st}` : '');
 const otcBadge = (r) => (r.o ? `<span class="badge ${/전문/.test(r.o) ? 'etc' : 'otc'}">${esc(/전문/.test(r.o) ? '전문' : '일반')}</span>` : '') +
-  (r.st ? `<span class="badge off">${esc(statTxt(r))}</span>` : '') + (r.nk ? `<span class="badge nk">${esc(r.nk === '한외마약' ? '한외마약' : r.nk + '(마약류)')}</span>` : '') + (r.im ? '<span class="badge im">수입</span>' : '') + (r.ra ? '<span class="badge ra">희귀</span>' : '');
+  (data.recall && data.recall[r.s] ? '<span class="badge off">회수</span>' : '') + (r.st ? `<span class="badge off">${esc(statTxt(r))}</span>` : '') + (r.nk ? `<span class="badge nk">${esc(r.nk === '한외마약' ? '한외마약' : r.nk + '(마약류)')}</span>` : '') + (r.im ? '<span class="badge im">수입</span>' : '') + (r.ra ? '<span class="badge ra">희귀</span>' : '');
 const won = (v) => `${Math.round(v).toLocaleString()}원`;
 const priceTxt = (r) => (r.pr ? `약가 ${won(r.pr)}/${r.pu || '개'}` : '');
 // 약가가 없는 약: 일반의약품은 약국마다 값이 달라 공식 가격이 없고, 전문의약품은 약가 자료에 없는 경우
@@ -853,6 +854,7 @@ async function showItem(seq) {
         <table class="spec">${spec.map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join('')}<tr id="ingrRow" class="hidden"><th>성분</th><td></td></tr></table>
       </div>
     </div>
+    ${recallBox(seq)}
     <div class="dur hidden" id="durBox"></div>
     <div class="doc" id="doc"><div class="hint" style="padding:14px 0">효능·용법·주의사항 불러오는 중…</div></div>
     <div class="links">
@@ -956,6 +958,17 @@ async function showItem(seq) {
   const sec = [['efcy', '효능·효과'], ['use', '용법·용량'], ['warn', '이 약을 쓰기 전 꼭 알아야 할 것'], ['atpn', '주의사항'], ['intrc', '같이 먹으면 안 되는 약·음식'], ['se', '부작용'], ['keep', '보관 방법'], ['keep2', '저장 방법'], ['valid', '사용 기한']];
   doc.innerHTML = sec.filter(([k]) => d[k]).map(([k, t]) => `<details><summary>${t}</summary><div class="txt">${esc(d[k])}</div></details>`).join('') +
     `<div class="hint" style="padding:10px 0">출처: 식약처 ${esc(d.src)}</div>`;
+}
+
+// ---------- 회수·판매중지 ----------
+// 식약처 회수·판매중지 정보(data/recall.json, 배포 때마다 새로). 같은 약이라도 특정 제조번호만 해당될 수 있다
+const ymd = (d) => (/^\d{8}$/.test(d) ? `${d.slice(0, 4)}.${+d.slice(4, 6)}.${+d.slice(6)}` : '');
+function recallBox(seq) {
+  const rcs = data.recall && data.recall[seq];
+  if (!rcs || !rcs.length) return '';
+  return `<div class="recallbox"><b>⚠ 회수·판매중지 이력이 있는 약이에요</b>
+    ${rcs.map(([d, why, lot]) => `<div class="rcrow">${ymd(d) ? `<span class="dtag bad">${ymd(d)}</span>` : ''}<span>${esc(why || '사유 정보 없음')}${lot ? ` <small>(제조번호 ${esc(lot)})</small>` : ''}</span></div>`).join('')}
+    <div class="hint" style="margin-top:6px">식약처 회수·판매중지 정보${data.recallAt ? ` · ${esc(data.recallAt)} 받음` : ''}. 같은 이름의 약이라도 해당 제조번호만 회수 대상일 수 있어요. 가지고 있는 약의 제조번호를 확인하고, 해당되면 약국에 문의하세요.</div></div>`;
 }
 
 // ---------- 안전 정보(DUR) ----------
@@ -1092,7 +1105,7 @@ function showCmp(seqs) {
   const mm = (v) => (v ? `${v}mm` : '');
   const dd = (x, y) => { if (!x || !y) return ''; const d = Math.round((y - x) * 100) / 100; return d ? `<small>① 대비 ${d > 0 ? '+' : '−'}${Math.abs(d)}mm</small>` : '<small style="color:#86efac">① 과 같음</small>'; };
   const rows = [
-    ['구분', (r) => [r.o, r.im && '수입', r.nk, r.ra && '희귀'].filter(Boolean).join(' · ')], ['허가 상태', (r) => statTxt(r) || '정상'], ['제형', (r) => r.f], ['코팅', (r) => M.coatOf(r)], ['모양', (r) => r.sh], ['색', (r) => M.dbColors(r).join(', ')],
+    ['구분', (r) => [r.o, r.im && '수입', r.nk, r.ra && '희귀'].filter(Boolean).join(' · ')], ['허가 상태', (r) => statTxt(r) || '정상'], ['회수 이력', (r) => (data.recall && data.recall[r.s] ? '있음 (' + ymd(data.recall[r.s][0][0]) + ')' : '없음')], ['제형', (r) => r.f], ['코팅', (r) => M.coatOf(r)], ['모양', (r) => r.sh], ['색', (r) => M.dbColors(r).join(', ')],
     ['각인 앞', (r) => r.pf], ['각인 뒤', (r) => r.pb], ['분할선', (r) => lineTxt(r) || '없음'],
     ['장축', (r) => mm(r.L), 'L'], ['단축', (r) => mm(r.W), 'W'], ['두께', (r) => mm(r.T), 'T'],
     ['업체', (r) => r.e], ['분류', (r) => r.cl], ['주성분', (r) => r.in],

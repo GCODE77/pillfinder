@@ -7,7 +7,8 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: '0 18 * * 0'   # 매주 월요일 03:00 (한국 시간)
+    - cron: '0 18 * * 0'   # 매주 월요일 03:00 (한국 시간) — 낱알·허가·DUR 새로 받기
+    - cron: '30 20 * * *'  # 매일 05:30 (한국 시간) — 캐시된 데이터에 회수·판매중지만 새로 얹어 다시 배포
   workflow_dispatch:
     inputs:
       fresh:
@@ -77,6 +78,13 @@ jobs:
         with:
           path: data/dur.json
           key: mfds-dur-v1-${{ steps.week.outputs.w }}
+      # 회수·판매중지: 자주 바뀌어서 캐시 없이 배포할 때마다 새로 받는다(1천 건 안팎, 몇 초)
+      - name: 회수·판매중지 받기
+        if: hashFiles('data/pills.json') != ''
+        continue-on-error: true
+        env:
+          SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+        run: node scripts/build-recall.mjs
       - name: 올릴 파일 고르기
         run: |
           mkdir -p _site
