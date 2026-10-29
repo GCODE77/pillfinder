@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.15.1';
+const APP_VERSION = '1.16.0';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -157,8 +157,8 @@ function card(r, extra = {}) {
   return `<button class="card${extra.checked ? ' sel' : ''}${cmp.includes(r.s) ? ' cmpsel' : ''}" data-seq="${esc(r.s)}"${extra.key ? ` data-key="${esc(extra.key)}"` : ''}${extra.hk ? ` data-hk="${esc(extra.hk)}"` : ''}>
     ${preCard(extra)}<div class="img">${imgOf(r)}</div>
     <div class="body"><div class="name">${otcBadge(r)}${esc(r.n)}</div><div class="sub">${esc(r.e)}${r.cl ? ' · ' + esc(r.cl) : ''}</div>${extra.when ? `<div class="when">${extra.thumb ? `<img class="mythumb" src="${esc(extra.thumb)}" alt="내가 찍은 사진">` : ''}<span>${esc(extra.when)}</span></div>` : ''}
-      <div class="feat">${feat.map((f) => `<span>${f.startsWith('<') ? f : esc(f)}</span>`).join('')}</div><div>${size}${cmpb}</div>${why ? `<div class="why">${why}</div>` : ''}${extra.note ? `<div class="why"><span class="hi">${esc(extra.note)}</span></div>` : ''}</div>
-    ${extra.score !== undefined ? `<div class="score">${Math.round(extra.score * 100)}<small>일치</small></div>` : ''}
+      <div class="feat">${feat.map((f) => `<span>${f.startsWith('<') ? f : esc(f)}</span>`).join('')}</div><div>${size}${cmpb}</div>${why ? `<div class="why">${why}</div>` : ''}</div>
+    ${extra.score !== undefined ? `<div class="score">${Math.round(extra.score * 100)}<small>일치</small></div>` : ''}${extra.note ? `<div class="cardnote">${esc(extra.note)}</div>` : ''}
   </button>`;
 }
 document.addEventListener('click', (e) => {
@@ -915,7 +915,7 @@ async function showItem(seq) {
     if (sim.mode === 'size') {
       list = M.sizeAlike(data.db, r, { otcOnly: sim.otc, sameForm: sim.form, sameShape: sim.shape, sameLine: sim.line, sameCoat: sim.coat, limit: 60 }).map((x) => ({
         r: x.r, score: x.score,
-        note: `차이 · 장축 ${mmd(x.d.L)}` + (x.d.W !== null ? ` · 단축 ${mmd(x.d.W)}` : '') + (x.d.T !== null ? ` · 두께 ${mmd(x.d.T)}` : r.T ? ' · 두께 자료 없음' : '') + 'mm',
+        note: `차이 장축 ${mmd(x.d.L)}` + (x.d.W !== null ? ` · 단축 ${mmd(x.d.W)}` : '') + (x.d.T !== null ? ` · 두께 ${mmd(x.d.T)}` : r.T ? ' · 두께 자료 없음' : '') + 'mm',
       }));
       note = !r.L ? '이 약은 크기 자료가 없어 찾을 수 없습니다.'
         : `기준: ${sizeTxt(r)} · 색·각인은 보지 않고 크기가 가까운 ${sim.otc ? '일반의약품' : '약'} 순서입니다. 조제·분포 시험용 대체약을 고를 때 쓰세요(복용 대체 아님).`;
@@ -1008,21 +1008,80 @@ function mineBar(l) {
   return `<button class="chip" data-m="${l}-all">전체 선택</button><button class="chip" data-m="${l}-share">공유${n ? ` (${n})` : ''}</button><button class="chip danger" data-m="${l}-del">삭제${n ? ` (${n})` : ''}</button><button class="chip" data-m="${l}-off">취소</button>`;
 }
 // 실제 크기(mm) 비율로 겹쳐 그린 윤곽 — 모양은 대략적인 표현
-function overlaySvg(rs) {
-  const cols = ['#facc15', '#22d3ee', '#f472b6'];
-  const dim = rs.map((r) => ({ L: Math.max(r.L || 0, r.W || 0), W: Math.min(r.L || 0, r.W || r.L || 0), sh: r.sh || '' }));
+// 비교 그림: 겹쳐/나란히 × 윤곽/실제 색·모양. 크기(mm)는 식약처 자료, 모양은 모양 분류(원형·타원·반원·삼각·사각·마름모·오각·육각·팔각·장방)로 그린다.
+// 식약처 사진 서버가 다른 사이트의 픽셀 읽기를 막아서 사진 윤곽은 쓸 수 없다.
+const OV_COL = ['#facc15', '#22d3ee', '#f472b6'], OV_NUM = ['①', '②', '③'];
+const OV_DARK = new Set(['검정', '남색', '갈색', '자주', '보라', '빨강', '파랑', '초록']);
+const cmpView = { layout: 'over', style: 'line', ...store.get('pf.cmpview', {}), off: new Set(), key: '' };
+// 정다각형을 L×W 상자에 꽉 차게
+function polyPts(n, start, cx, cy, L, W) {
+  const raw = Array.from({ length: n }, (_, k) => { const a = ((start + (360 * k) / n) * Math.PI) / 180; return [Math.cos(a), Math.sin(a)]; });
+  const xs = raw.map((q) => q[0]), ys = raw.map((q) => q[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  return raw.map(([x, y]) => `${(cx - L / 2 + ((x - x0) / (x1 - x0)) * L).toFixed(3)},${(cy - W / 2 + ((y - y0) / (y1 - y0)) * W).toFixed(3)}`).join(' ');
+}
+function pillEl(r, d, cx, cy, i, real, sw, op, withText) {
+  const sh = r.sh || '', cap = /캡슐/.test(M.formGroup(r)), { L, W } = d;
+  const a = real
+    ? `fill="url(#ovg${i})" fill-opacity="${op}" stroke="${OV_COL[i]}" stroke-width="${sw}" stroke-linejoin="round"`
+    : `fill="${OV_COL[i]}" fill-opacity=".18" stroke="${OV_COL[i]}" stroke-width="${sw}" stroke-linejoin="round" ${i === 1 ? 'stroke-dasharray="1.2 0.8"' : i === 2 ? 'stroke-dasharray="3 1"' : ''}`;
+  let el;
+  if (/원형/.test(sh) && !/타원|반원/.test(sh)) el = `<ellipse cx="${cx}" cy="${cy}" rx="${L / 2}" ry="${W / 2}" ${a}/>`;
+  else if (/타원/.test(sh)) el = `<ellipse cx="${cx}" cy="${cy}" rx="${L / 2}" ry="${W / 2}" ${a}/>`;
+  else if (/반원/.test(sh)) el = `<path d="M${cx - L / 2} ${cy + W / 2}A${L / 2} ${W} 0 0 1 ${cx + L / 2} ${cy + W / 2}Z" ${a}/>`;
+  else if (/삼각/.test(sh)) el = `<polygon points="${cx},${cy - W / 2} ${cx + L / 2},${cy + W / 2} ${cx - L / 2},${cy + W / 2}" ${a}/>`;
+  else if (/마름모/.test(sh)) el = `<polygon points="${cx},${cy - W / 2} ${cx + L / 2},${cy} ${cx},${cy + W / 2} ${cx - L / 2},${cy}" ${a}/>`;
+  else if (/오각/.test(sh)) el = `<polygon points="${polyPts(5, -90, cx, cy, L, W)}" ${a}/>`;
+  else if (/육각/.test(sh)) el = `<polygon points="${polyPts(6, 0, cx, cy, L, W)}" ${a}/>`;
+  else if (/팔각/.test(sh)) el = `<polygon points="${polyPts(8, 22.5, cx, cy, L, W)}" ${a}/>`;
+  else {
+    const rx = /장방/.test(sh) ? (cap ? W / 2 : W * 0.35) : /사각/.test(sh) ? Math.min(L, W) * 0.12 : W * 0.25;
+    el = `<rect x="${cx - L / 2}" y="${cy - W / 2}" width="${L}" height="${W}" rx="${rx}" ${a}/>`;
+  }
+  if (!real) return el;
+  // 분할선(−는 장축을 가로지르는 선, +는 십자)과 각인
+  let marks = '';
+  const ln = M.lineOf(r);
+  if (ln.has && !cap) {
+    const lw = Math.max(0.15, W * 0.035), st = `stroke="rgba(0,0,0,.5)" stroke-width="${lw}" stroke-linecap="round"`;
+    marks += `<line x1="${cx}" y1="${cy - W * 0.45}" x2="${cx}" y2="${cy + W * 0.45}" ${st}/>`;
+    if (ln.kinds.includes('+')) marks += `<line x1="${cx - L * 0.45}" y1="${cy}" x2="${cx + L * 0.45}" y2="${cy}" ${st}/>`;
+  }
+  const t = withText ? printTxt(r).split(' / ')[0].slice(0, 10) : '';
+  if (t) {
+    const fs = Math.min(W * 0.32, (L * 0.8) / Math.max(2, t.length * 0.62)), dark = OV_DARK.has(M.dbColors(r)[0]);
+    const tx = ln.has && !cap ? cx - L * 0.22 : cx;
+    marks += `<text x="${tx}" y="${cy + fs * 0.35}" text-anchor="middle" font-size="${fs}" font-weight="800" fill="${dark ? 'rgba(255,255,255,.88)' : 'rgba(0,0,0,.62)'}" font-family="Pretendard,sans-serif">${esc(t)}</text>`;
+  }
+  return el + marks;
+}
+function overlaySvg(rs, view) {
+  const n = rs.length, real = view.style === 'real', side = view.layout === 'side';
+  const dim = rs.map((r) => ({ L: Math.max(r.L || 0, r.W || 0), W: Math.min(r.L || 0, r.W || r.L || 0) }));
   const maxL = Math.max(...dim.map((d) => d.L), 1), maxW = Math.max(...dim.map((d) => d.W), 1);
-  const pad = 4, vw = maxL + pad * 2, vh = maxW + pad * 2 + 5, cx = vw / 2, cy = (maxW + pad * 2) / 2;
-  const shape = (d, i) => {
-    const a = `fill="${cols[i]}" fill-opacity=".18" stroke="${cols[i]}" stroke-width="${Math.max(0.25, maxL / 90)}" ${i === 1 ? 'stroke-dasharray="1.2 0.8"' : i === 2 ? 'stroke-dasharray="3 1"' : ''}`;
-    if (!d.L) return '';
-    if (/원형/.test(d.sh) && !/타원|반원/.test(d.sh)) return `<circle cx="${cx}" cy="${cy}" r="${d.L / 2}" ${a}/>`;
-    if (/타원/.test(d.sh)) return `<ellipse cx="${cx}" cy="${cy}" rx="${d.L / 2}" ry="${d.W / 2}" ${a}/>`;
-    const rx = /장방/.test(d.sh) ? d.W * 0.45 : d.W * 0.18;
-    return `<rect x="${cx - d.L / 2}" y="${cy - d.W / 2}" width="${d.L}" height="${d.W}" rx="${rx}" ${a}/>`;
-  };
-  const bx = cx - 2.5, by = maxW + pad * 2 + 1.5, fs = Math.max(1.6, maxL / 12);
-  return `<svg viewBox="0 0 ${vw} ${vh}" aria-label="두 약의 실제 크기 비교"><line x1="${bx}" y1="${by}" x2="${bx + 5}" y2="${by}" stroke="#94a3b8" stroke-width="${maxL / 120}"/><text x="${cx + 3.5}" y="${by + fs * 0.35}" font-size="${fs}" fill="#94a3b8" font-family="Pretendard,sans-serif">5mm</text>${dim.map(shape).join('')}</svg>`;
+  const show = rs.map((_, i) => !view.off.has(i));
+  if (!show.some(Boolean)) return '<div class="hint" style="text-align:center;padding:24px 0">보이는 약이 없어요. 위의 ①②③ 버튼을 눌러 켜세요.</div>';
+  const pad = 4, sw = Math.max(0.25, maxL / 90), fs = Math.max(1.6, maxL / 12), lab = side ? fs * 1.7 : 0, gap = Math.max(2, maxL * 0.15);
+  const vw = side ? n * maxL + (n - 1) * gap + pad * 2 : maxL + pad * 2, bodyH = maxW + pad * 2;
+  const vh = bodyH + lab + 5, cy = bodyH / 2, by = bodyH + lab + 1.5;
+  const cxOf = (i) => (side ? pad + maxL / 2 + i * (maxL + gap) : vw / 2);
+  const bx = side ? pad : vw / 2 - 2.5;
+  const defs = real ? '<defs>' + rs.map((r, i) => {
+    if (!show[i]) return '';
+    const cs = M.dbColors(r), c1 = SWATCH[cs[0]] || '#d1d5db', c2 = SWATCH[cs[1]] || c1;
+    return `<linearGradient id="ovg${i}" x1="0" x2="1" y1="0" y2="0"><stop offset=".5" stop-color="${c1}"/><stop offset=".5" stop-color="${c2}"/></linearGradient>`;
+  }).join('') + '</defs>' : '';
+  const op = side ? 1 : 0.62;
+  const body = rs.map((r, i) => (show[i] ? pillEl(r, dim[i], cxOf(i), cy, i, real, sw, op, side || show.filter(Boolean).length === 1) : '')).join('');
+  const labels = side ? rs.map((r, i) => (show[i] ? `<text x="${cxOf(i)}" y="${bodyH + fs * 1.15}" text-anchor="middle" font-size="${fs * 0.8}" font-weight="800" fill="${OV_COL[i]}" font-family="Pretendard,sans-serif">${OV_NUM[i]} ${dim[i].L}×${dim[i].W}mm</text>` : '')).join('') : '';
+  return `<svg viewBox="0 0 ${vw} ${vh}" aria-label="약 실제 크기 비교">${defs}<line x1="${bx}" y1="${by}" x2="${bx + 5}" y2="${by}" stroke="#94a3b8" stroke-width="${maxL / 120}"/><text x="${bx + 5.8}" y="${by + fs * 0.35}" font-size="${fs}" fill="#94a3b8" font-family="Pretendard,sans-serif">5mm</text>${body}${labels}</svg>`;
+}
+function drawOvl(rs) {
+  const v = cmpView, real = v.style === 'real';
+  $('#ovBox').innerHTML = overlaySvg(rs, v) + `<div class="hint" style="text-align:center">${v.layout === 'side' ? '나란히 · ' : '겹쳐 보기 · '}실제 크기 비율 · ${real ? '테두리 색으로 ①②③ 구분 · 식약처 자료의 모양 분류·색·크기·분할선·각인으로 그린 그림이에요(사진 윤곽은 아닙니다)' : rs.map((r, i) => `<span style="color:${OV_COL[i]}">${OV_NUM[i]} ${['실선', '점선', '긴 점선'][i]}</span>`).join(' · ') + ' (모양은 대략적인 표현)'}</div>`;
+  document.querySelectorAll('#ovLayout button').forEach((b) => b.classList.toggle('on', b.dataset.v === v.layout));
+  document.querySelectorAll('#ovStyle button').forEach((b) => b.classList.toggle('on', b.dataset.v === v.style));
+  document.querySelectorAll('#ovTog .ovt').forEach((b) => { const on = !v.off.has(+b.dataset.i); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
 }
 function showCmp(seqs) {
   const box = $('#cmp'), rs = seqs.map((s) => data.bySeq && data.bySeq.get(s));
@@ -1051,7 +1110,9 @@ function showCmp(seqs) {
     <h2 style="margin-top:4px">약 비교 (${n}개)</h2>
     <div class="heads"><div></div>${rs.map(head).join('')}</div>
     <div class="hint" style="margin:2px 0">노랑 칸은 서로 다른 항목입니다.${dl !== null ? ` 장축 차이(최대−최소) ${dl.toFixed(2)}mm.` : ''}</div>
-    <div class="ovl">${rs.every((r) => r.L) ? overlaySvg(rs) : '<div class="hint">크기 자료가 없는 약이 있어 겹쳐 볼 수 없습니다.</div>'}<div class="hint" style="text-align:center">실제 크기 비율 겹쳐 보기 · ${rs.map((r, i) => `<span style="color:${COL[i]}">${NUM[i]} ${['실선', '점선', '긴 점선'][i]}</span>`).join(' · ')} (모양은 대략적인 표현)</div></div>
+    ${rs.every((r) => r.L) ? `<div class="ovctl"><div class="seg" id="ovLayout"><button data-v="over">겹쳐 보기</button><button data-v="side">나란히 보기</button></div><div class="seg" id="ovStyle"><button data-v="line">윤곽만</button><button data-v="real">실제 색·모양</button></div></div>
+    <div class="ovtog" id="ovTog">${rs.map((r, i) => `<button class="ovt on" data-i="${i}" style="--c:${COL[i]}">${NUM[i]} ${esc(r.n.replace(/\(.*$/, '').slice(0, 9))}</button>`).join('')}</div>
+    <div class="ovl" id="ovBox"></div>` : '<div class="ovl"><div class="hint">크기 자료가 없는 약이 있어 겹쳐 볼 수 없습니다.</div></div>'}
     <div class="grid3">${cells}</div>
     <div class="row" style="margin-top:12px"><button class="primary" id="cmpSave">${cmpSaved(seqs) ? '저장됨 ✓ (내 약 탭)' : '이 비교 저장'}</button><button class="secondary" id="cmpLink">링크 복사</button></div>
     <div class="row" style="margin-top:8px">${rs.map((r, i) => `<a class="btn secondary" href="#/item/${encodeURIComponent(r.s)}">${NUM[i]} 상세 보기</a>`).join('')}</div>
@@ -1065,6 +1126,14 @@ function showCmp(seqs) {
   $('#cmpLink').onclick = async () => {
     try { await navigator.clipboard.writeText(location.href); toast('비교 링크를 복사했습니다'); } catch { toast(location.href, 4000); }
   };
+  if ($('#ovBox')) {
+    const key = seqs.join('/'); if (cmpView.key !== key) { cmpView.key = key; cmpView.off = new Set(); }
+    drawOvl(rs);
+    const save = () => store.set('pf.cmpview', { layout: cmpView.layout, style: cmpView.style });
+    $('#ovLayout').onclick = (e) => { const b = e.target.closest('button'); if (b) { cmpView.layout = b.dataset.v; save(); drawOvl(rs); } };
+    $('#ovStyle').onclick = (e) => { const b = e.target.closest('button'); if (b) { cmpView.style = b.dataset.v; save(); drawOvl(rs); } };
+    $('#ovTog').onclick = (e) => { const b = e.target.closest('.ovt'); if (!b) return; const i = +b.dataset.i; cmpView.off.has(i) ? cmpView.off.delete(i) : cmpView.off.add(i); drawOvl(rs); };
+  }
 }
 // 저장한 비교 묶음(조제 테스트용 대체약 세트): 같은 약 묶음은 순서와 관계없이 하나로 본다
 let cmps = store.get('pf.cmps', []);
