@@ -310,6 +310,20 @@
       .sort((a, b) => (b.exact - a.exact) || ((a.r.pr ?? 1e12) - (b.r.pr ?? 1e12)) || a.r.n.localeCompare(b.r.n, 'ko'));
   }
 
+  // 약국 영업 상태. hours = 월~일·공휴일 8칸('0900-1800', 칸 사이 쉼표), now = {d: 월0~일6, t: HHMM}
+  // 어제 밤에 시작해 새벽에 끝나는 곳(예 2200-0200)은 새벽 시간대에도 '영업 중'으로 본다. 공휴일은 알 수 없어 평일·주말 칸만 쓴다
+  function pharmOpen(hours, now) {
+    const segs = String(hours || '').split(',');
+    const parse = (s) => { if (!s) return null; const [a, b] = s.split('-'); return { s: +a, c: +b, ov: +b <= +a }; };
+    const today = parse(segs[now.d]), prev = parse(segs[(now.d + 6) % 7]);
+    if (prev && prev.ov && now.t < prev.c) return { st: 'on', close: prev.c, late: true, today: prev };
+    if (!today) return { st: 'unk', late: false, today: null };
+    const late = today.ov || today.c >= 2200;
+    if (today.ov) return now.t >= today.s ? { st: 'on', close: today.c, late: true, today } : { st: 'before', open: today.s, late: true, today };
+    if (now.t >= today.s && now.t < today.c) return { st: 'on', close: today.c, late, today };
+    return now.t < today.s ? { st: 'before', open: today.s, late, today } : { st: 'closed', late, today };
+  }
+
   // ---------- 직접 고르기(칩) 필터 ----------
   // 제형 묶음: 식약처 제형명 → 정제 / 경질캡슐 / 연질캡슐 / 기타 (캡슐이 전체의 20%, 장방형의 절반 이상이라 구분하면 후보가 크게 줄어든다)
   function formGroup(r) {
@@ -394,7 +408,7 @@
     return out.slice(0, limit).map((x) => x.r);
   }
 
-  const api = { rank, scoreOne, manualFilter, formGroup, coatOf,FORM_DETAIL, similarLook, sizeAlike, lineOf, lineFit, lineWant, sameIngredient, isOtc, hasImprint, imprintMatchScore, searchName, normImprint, imprintSim, dbColors, choseong, COLOR_FAMILY, shapeSim, colorSim };
+  const api = { rank, scoreOne, manualFilter, formGroup, coatOf, pharmOpen,FORM_DETAIL, similarLook, sizeAlike, lineOf, lineFit, lineWant, sameIngredient, isOtc, hasImprint, imprintMatchScore, searchName, normImprint, imprintSim, dbColors, choseong, COLOR_FAMILY, shapeSim, colorSim };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Match = api;
 })(typeof self !== 'undefined' ? self : this);

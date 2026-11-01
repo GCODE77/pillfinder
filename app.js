@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.18.0';
+const APP_VERSION = '1.19.0';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -177,7 +177,7 @@ document.addEventListener('click', (e) => {
 });
 
 // ---------- 화면 이동 ----------
-const PAGES = { cam: '#pgCam', search: '#pgSearch', item: '#pgItem', cmp: '#pgCmp', mine: '#pgMine' };
+const PAGES = { cam: '#pgCam', search: '#pgSearch', item: '#pgItem', cmp: '#pgCmp', mine: '#pgMine', pharm: '#pgPharm' };
 function route() {
   const [, page = 'cam', arg, arg2, arg3] = (location.hash || '#/cam').split('/');
   if (page === 'shape') { location.replace('#/search'); return; } // 예전 '모양으로' 주소
@@ -188,6 +188,7 @@ function route() {
   if (key === 'cam') camEnter(); else camLeave();
   if (key === 'search') { runFilter(); if (!matchMedia('(pointer:coarse)').matches) setTimeout(() => $('#q').focus(), 50); }
   if (key === 'item') showItem(decodeURIComponent(arg || ''));
+  if (key === 'pharm') phEnter();
   if (key === 'cmp') showCmp([arg, arg2, arg3].filter(Boolean).map(decodeURIComponent));
   renderTray();
   if (key === 'mine') showMine();
@@ -861,6 +862,7 @@ async function showItem(seq) {
     <div class="doc" id="doc"><div class="hint" style="padding:14px 0">효능·용법·주의사항 불러오는 중…</div></div>
     <div class="links">
       <a class="btn secondary" target="_blank" rel="noopener" href="https://nedrug.mfds.go.kr/pbp/CCBBB01/getItemDetail?itemSeq=${encodeURIComponent(r.s)}">의약품안전나라 원문</a>
+      <a class="btn secondary" href="#/pharm">근처 약국 찾기</a>
       <a class="btn secondary" target="_blank" rel="noopener" href="https://www.health.kr/searchResult?search_value=${encodeURIComponent(r.n.replace(/\(.*$/, ''))}">약학정보원에서 보기</a>
     </div>
     <div class="simbox">
@@ -997,6 +999,93 @@ function renderDur(box, seq, dur) {
     ${rows.map(([l, t, lv]) => `<div class="durrow"><b class="dtag ${lv}">${esc(l)}</b><span>${esc(t)}</span></div>`).join('')}
     ${co.size ? `<details class="durco"><summary><b class="dtag bad">병용 금기</b> 같이 먹으면 안 되는 성분 ${co.size}개 (눌러서 보기)</summary><ul>${[...co.values()].map(([n, why]) => `<li><b>${esc(n)}</b>${why ? ` <small>— ${esc(why)}</small>` : ''}</li>`).join('')}</ul></details>` : ''}
     <div class="hint" style="margin-top:6px">식약처 DUR(의약품 사용 점검) 품목정보 기준${dur.at ? ` · ${esc(dur.at)} 받음` : ''}. 성분 단위 정보라 참고용입니다. 복용 중인 약이 있으면 의사·약사와 꼭 상의하세요.</div>`;
+}
+
+// ---------- 약국 찾기 ----------
+// 국립중앙의료원 전국 약국 정보(data/ph/<격자>.json, 위·경도 0.2도 격자). 내 위치는 이 기기 안에서만 쓰고 어디에도 보내지 않는다
+const SIDO = { 서울: [37.5665, 126.978], 부산: [35.1796, 129.0756], 대구: [35.8714, 128.6014], 인천: [37.4563, 126.7052], 광주: [35.1595, 126.8526], 대전: [36.3504, 127.3845], 울산: [35.5384, 129.3114], 세종: [36.48, 127.289], '경기(수원)': [37.2636, 127.0286], '강원(춘천)': [37.8813, 127.7298], '충북(청주)': [36.6424, 127.489], '충남(홍성)': [36.6588, 126.6728], '전북(전주)': [35.8242, 127.148], '전남(무안)': [34.8161, 126.463], '경북(안동)': [36.5684, 128.7294], '경남(창원)': [35.2279, 128.6811], 제주: [33.4996, 126.5312] };
+const ph = { at: null, index: undefined, cells: new Map(), loc: null, onlyOpen: false, late: false, q: '', from: '' };
+const phKst = () => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Seoul', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).map((x) => [x.type, x.value]));
+  return { d: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(p.weekday), t: +p.hour * 100 + +p.minute };
+};
+const phFmt = (s) => `${s.slice(0, 2)}:${s.slice(2)}`;
+// 오늘 영업 상태(판정은 match.js pharmOpen). 공휴일은 따로 알 수 없어 '공휴일 시간'과 다를 수 있다
+function phOpen(rec, now) {
+  const o = M.pharmOpen(rec[5], now), hm = (n) => phFmt(String(n % 2400).padStart(4, '0'));
+  if (o.st === 'unk') return { st: 'unk', txt: '오늘 영업시간 정보 없음', today: '', late: false };
+  const today = `${o.today.ov ? '오늘 ' : '오늘 '}${hm(o.today.s)}–${hm(o.today.c)}${o.today.ov ? '(다음 날)' : ''}`;
+  if (o.st === 'on') return { st: 'on', txt: `영업 중 · ${hm(o.close)}까지`, today, late: o.late };
+  if (o.st === 'before') return { st: 'off', txt: `영업 전 · ${hm(o.open)} 시작`, today, late: o.late };
+  return { st: 'off', txt: '영업 종료', today, late: o.late };
+}
+const phDist = (la1, lo1, la2, lo2) => { const R = 6371, r = Math.PI / 180, dla = (la2 - la1) * r, dlo = (lo2 - lo1) * r, x = Math.sin(dla / 2) ** 2 + Math.cos(la1 * r) * Math.cos(la2 * r) * Math.sin(dlo / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(x)); };
+async function phLoadCells(lat, lon) {
+  if (ph.index === undefined) ph.index = await fetch(BASE + 'ph/index.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  if (!ph.index) return null;
+  const { cell, lat0, lon0 } = ph.index, iy = Math.floor((lat - lat0) / cell), ix = Math.floor((lon - lon0) / cell);
+  const keys = [];
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) keys.push(`${iy + dy}_${ix + dx}`);
+  await Promise.all(keys.filter((k) => !ph.cells.has(k)).map((k) => fetch(`${BASE}ph/${k}.json`).then((r) => (r.ok ? r.json() : [])).catch(() => []).then((v) => ph.cells.set(k, v))));
+  return keys.flatMap((k) => ph.cells.get(k) || []);
+}
+async function phSearch() {
+  const box = $('#phList'), note = $('#phNote');
+  if (!ph.loc) { box.innerHTML = ''; note.textContent = '“내 위치로 찾기”를 누르거나 아래에서 지역을 고르세요.'; return; }
+  note.textContent = '약국을 찾는 중…';
+  const all = await phLoadCells(ph.loc[0], ph.loc[1]);
+  if (all === null) { box.innerHTML = '<div class="empty-msg">약국 데이터가 아직 없어요. 새 버전이 배포된 뒤 처음 한 번은 준비 중일 수 있어요.</div>'; note.textContent = ''; return; }
+  const now = phKst(), q = ph.q.trim().replace(/\s+/g, '');
+  let list = all.map((r) => ({ r, km: phDist(ph.loc[0], ph.loc[1], r[3], r[4]), o: phOpen(r, now) }));
+  if (q) list = list.filter((x) => (x.r[0] + x.r[1]).replace(/\s+/g, '').includes(q));
+  else list = list.filter((x) => x.km <= 15);
+  const total = list.length;
+  if (ph.onlyOpen) list = list.filter((x) => x.o.st === 'on');
+  if (ph.late) list = list.filter((x) => x.o.late);
+  list.sort((a, b) => a.km - b.km);
+  const shown = list.slice(0, 40);
+  const nOpen = list.filter((x) => x.o.st === 'on').length;
+  note.textContent = `${ph.from} 기준 ${q ? `“${ph.q.trim()}” ` : '15km 안 '}약국 ${total}곳${ph.onlyOpen || ph.late ? ` 중 조건에 맞는 ${list.length}곳` : ''}${list.length ? `, 가까운 순 ${shown.length}곳 (지금 영업 중 ${nOpen}곳)` : ''}`;
+  const km = (v) => (v < 1 ? `${Math.round(v * 10) * 100}m` : `${v.toFixed(1)}km`);
+  box.innerHTML = shown.length ? shown.map(({ r, km: d, o }) => {
+    const tel = r[2].replace(/[^\d+]/g, ''), nm = encodeURIComponent(r[0]);
+    return `<div class="phcard"><div class="ph1"><b>${esc(r[0])}</b><span class="phst ${o.st}">${esc(o.txt)}</span></div>
+      <div class="ph2">${esc(r[1])}</div>
+      <div class="ph3">${esc(km(d))}${o.today ? ` · ${esc(o.today)}` : ''}</div>
+      <div class="ph4">${tel ? `<a class="chip" href="tel:${esc(tel)}">전화 ${esc(r[2])}</a>` : ''}<a class="chip" target="_blank" rel="noopener" href="https://map.kakao.com/link/to/${nm},${r[3]},${r[4]}">길찾기</a><a class="chip" target="_blank" rel="noopener" href="https://map.kakao.com/link/map/${nm},${r[3]},${r[4]}">지도</a></div></div>`;
+  }).join('') : `<div class="empty-msg">${q ? '그 이름·동네의 약국이 이 근처에 없어요.' : '조건에 맞는 약국이 없어요. 필터를 꺼 보세요.'}</div>`;
+}
+function phEnter() {
+  const sel = $('#phSido');
+  if (!sel.dataset.ok) { sel.innerHTML = '<option value="">지역 선택(위치를 못 쓸 때)</option>' + Object.keys(SIDO).map((k) => `<option>${k}</option>`).join(''); sel.dataset.ok = 1; }
+  $('#phOpen').classList.toggle('on', ph.onlyOpen); $('#phLate').classList.toggle('on', ph.late);
+  phSearch();
+}
+$('#phLoc').addEventListener('click', () => {
+  if (!navigator.geolocation) { toast('이 기기는 위치를 알 수 없어요. 아래에서 지역을 고르세요'); return; }
+  $('#phNote').textContent = '내 위치를 확인하는 중…';
+  navigator.geolocation.getCurrentPosition((p) => { ph.loc = [p.coords.latitude, p.coords.longitude]; ph.from = '내 위치'; $('#phSido').value = ''; phSearch(); },
+    (e) => { $('#phNote').textContent = e.code === 1 ? '위치 권한이 꺼져 있어요. 브라우저 설정에서 허용하거나, 아래에서 지역을 고르세요.' : '위치를 가져오지 못했어요. 아래에서 지역을 고르세요.'; },
+    { enableHighAccuracy: false, timeout: 12000, maximumAge: 300000 });
+});
+$('#phSido').addEventListener('change', (e) => { const c = SIDO[e.target.value]; if (!c) return; ph.loc = c.slice(); ph.from = e.target.value.replace(/\(.*$/, ''); phSearch(); });
+$('#phOpen').addEventListener('click', (e) => { ph.onlyOpen = !ph.onlyOpen; e.currentTarget.classList.toggle('on', ph.onlyOpen); phSearch(); });
+$('#phLate').addEventListener('click', (e) => { ph.late = !ph.late; e.currentTarget.classList.toggle('on', ph.late); phSearch(); });
+let phT = null;
+$('#phQ').addEventListener('input', (e) => { clearTimeout(phT); phT = setTimeout(() => { ph.q = e.target.value; phSearch(); }, 250); });
+
+// ---------- 안전성 서한 ----------
+// 식약처 의약품 안전성 서한(data/letters.json, 매일 갱신). 내 약 탭 맨 아래에서 처음 볼 때 한 번 읽는다
+let lettersP = null;
+function showLetters() {
+  const box = $('#letters');
+  lettersP = lettersP || fetch(BASE + 'letters.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  lettersP.then((d) => {
+    $('#lettersH').classList.toggle('hidden', !d); box.classList.toggle('hidden', !d);
+    if (!d) return;
+    box.innerHTML = d.items.map((x) => `<details><summary><span class="lt">${esc(x.d)}</span> ${esc(x.t)}</summary><div class="txt">${x.s ? `<p><b>${esc(x.s)}</b></p>` : ''}${x.c ? `<p>${esc(x.c)}</p>` : ''}<a class="btn secondary" target="_blank" rel="noopener" href="https://nedrug.mfds.go.kr/bbs/2/">의약품안전나라에서 보기</a></div></details>`).join('') +
+      `<div class="hint" style="padding:8px 0">식약처 의약품 안전성 서한 · ${esc(d.at)} 받음 (전체 ${esc(d.total)}건 중 최근 ${d.items.length}건)</div>`;
+  });
 }
 
 // ---------- 내 약 · 설정 ----------
@@ -1190,6 +1279,7 @@ function showMine() {
       <div class="body"><div class="name">${r ? esc(r.n) : '찾지 못함'}</div><div class="sub">${when} · 1순위 후보</div></div></button>`;
   }).join('') : '<div class="empty-msg">아직 찍어서 찾은 약이 없습니다.</div>';
   showCmps();
+  showLetters();
   $('#favBar').innerHTML = mineBar('fav'); $('#histBar').innerHTML = mineBar('hist');
   $('#sCoin').value = settings.coin;
   $('#sShare').checked = settings.share; $('#shareRow').classList.toggle('hidden', !SH.enabled());

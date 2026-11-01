@@ -255,6 +255,16 @@
   .recallbox>b{color:#fecaca;font-size:15.5px}
   .rcrow{display:flex;gap:8px;align-items:baseline;margin:6px 0}
   .badge.cvs{background:#14532d;color:#bbf7d0;border:1px solid #22c55e}
+  .phcard{background:var(--panel);border:1.5px solid var(--edge);border-radius:14px;padding:11px 12px;box-shadow:0 2px 8px rgba(0,0,0,.28)}
+  .ph1{display:flex;gap:8px;align-items:baseline;justify-content:space-between;flex-wrap:wrap}
+  .ph1 b{font-size:16px}
+  .phst{font-size:13px;font-weight:800;border-radius:7px;padding:2px 8px;white-space:nowrap}
+  .phst.on{background:#14532d;color:#bbf7d0}.phst.off{background:#3b1d1d;color:#fecaca}.phst.unk{background:#1e293b;color:#cbd5e1}
+  .ph2{margin-top:4px;color:#cbd5e1;font-size:14px;line-height:1.45}
+  .ph3{margin-top:3px;color:#fde68a;font-size:13.5px;font-weight:700}
+  .ph4{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+  .ph4 a.chip{text-decoration:none;display:inline-flex;align-items:center;min-height:38px}
+  .lt{color:var(--gold);font-weight:800;font-size:13px;margin-right:4px}
   .price.none{color:#9fb0c8;font-weight:600}
   .stale{color:#fbbf24}
   .advice{margin:8px 0;padding:10px 12px;border:1px solid #a16207;border-radius:12px;background:rgba(250,204,21,.09);color:#fde68a;font-size:14px;line-height:1.55}
@@ -400,6 +410,17 @@
   <!-- 약 비교 -->
   <section class="page" id="pgCmp"><div id="cmp" class="cmp"></div></section>
 
+  <!-- 약국 찾기 -->
+  <section class="page" id="pgPharm">
+    <h2 style="margin-top:4px">약국 찾기</h2>
+    <div class="hint">내 위치는 이 기기 안에서만 쓰고 어디에도 보내지 않아요. 영업시간은 식약처·국립중앙의료원 자료라 공휴일이나 사정에 따라 다를 수 있으니 전화로 확인하세요.</div>
+    <div class="row" style="margin-top:8px"><button class="primary" id="phLoc">내 위치로 찾기</button><select class="text" id="phSido" aria-label="지역 선택"></select></div>
+    <div class="bar"><button class="chip" id="phOpen">지금 영업 중만</button><button class="chip" id="phLate">밤 10시 넘게 하는 곳</button></div>
+    <input class="text" id="phQ" placeholder="약국 이름·동네로 좁히기 (예: 역삼동)" autocomplete="off" style="width:100%;margin-top:6px">
+    <div class="hint" id="phNote" style="margin-top:8px"></div>
+    <div class="list" id="phList"></div>
+  </section>
+
   <!-- 내 약 · 설정 -->
   <section class="page" id="pgMine">
     <h2 style="margin-top:4px">내 약</h2>
@@ -410,6 +431,8 @@
     <h2>최근 찾은 약</h2>
     <div class="bar" id="histBar"></div>
     <div class="list" id="histList"></div>
+    <h2 id="lettersH" class="hidden">식약처 안전성 서한 (최근)</h2>
+    <div class="doc hidden" id="letters"></div>
     <h2>설정</h2>
     <div class="panel">
       <div class="switch"><div><div class="t">기준 동전</div><div class="d">약 옆에 둔 동전 지름으로 실제 크기를 잽니다</div></div>
@@ -438,6 +461,7 @@
 <nav class="tabs"><div class="in">
   <button data-go="cam"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>찍어서 찾기</button>
   <button data-go="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>약 검색</button>
+  <button data-go="pharm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><path d="M12 7.5v5M9.5 10h5"/></svg>약국</button>
   <button data-go="mine"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>내 약</button>
 </div></nav>
 <div id="cmpTray"></div>

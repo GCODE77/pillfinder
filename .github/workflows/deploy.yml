@@ -78,6 +78,25 @@ jobs:
         with:
           path: data/dur.json
           key: mfds-dur-v1-${{ steps.week.outputs.w }}
+      # 전국 약국(위치·영업시간): 지역 격자별 파일로 나눠 주 1회 받고 따로 캐시(실패해도 앱은 배포)
+      - uses: actions/cache/restore@v4
+        id: phcache
+        if: ${{ !inputs.fresh }}
+        with:
+          path: data/ph
+          key: mfds-ph-v1-${{ steps.week.outputs.w }}
+      - name: 전국 약국 받기
+        id: ph
+        if: steps.phcache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        env:
+          SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+        run: node scripts/build-pharmacy.mjs
+      - uses: actions/cache/save@v4
+        if: steps.phcache.outputs.cache-hit != 'true' && steps.ph.outcome == 'success'
+        with:
+          path: data/ph
+          key: mfds-ph-v1-${{ steps.week.outputs.w }}
       # 회수·판매중지: 자주 바뀌어서 캐시 없이 배포할 때마다 새로 받는다(1천 건 안팎, 몇 초)
       - name: 회수·판매중지 받기
         if: hashFiles('data/pills.json') != ''

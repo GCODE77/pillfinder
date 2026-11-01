@@ -81,4 +81,18 @@ async function cvs() {
   console.log(`안전상비의약품: ${items.length}품목 → 낱알 ${new Set(seqs).size}개 맞춤${un.length ? ', 못 맞춤: ' + un.join(', ') : ''}`);
 }
 
-main().catch((e) => { console.error(e.message || e); process.exitCode = 1; }).then(() => cvs().catch((e) => console.warn(`::warning::안전상비의약품을 건너뜁니다: ${e.message}`)));
+// 의약품 안전성 서한(식약처가 의료진·국민에게 알리는 안전 정보): 최근 20건 → data/letters.json
+async function letters() {
+  const q = new URLSearchParams({ serviceKey: KEY, type: 'json', pageNo: '1', numOfRows: '100' });
+  const j = JSON.parse(await (await fetch(`https://apis.data.go.kr/1471000/DrugSafeLetterService02/getDrugSafeLetterList02?${q}`, { signal: AbortSignal.timeout(60000) })).text());
+  const eh = j.OpenAPI_ServiceResponse?.cmmMsgHeader; if (eh) throw new Error(`API 오류: ${eh.returnAuthMsg || eh.errMsg}`);
+  let items = j.body?.items ?? []; if (!Array.isArray(items)) items = items.item ? [].concat(items.item) : [items];
+  items = items.map((x) => x.item ?? x).filter((x) => x.TITLE);
+  items.sort((a, b) => String(b.PBANC_YMD || '').localeCompare(String(a.PBANC_YMD || '')));
+  const out = items.slice(0, 20).map((x) => ({ no: String(x.SAFT_LETT_NO || ''), t: clip(x.TITLE, 120), d: String(x.PBANC_YMD || '').slice(0, 10), k: clip(x.PBANC_DIVS_NM, 20), s: clip(x.SUMRY_CONT, 240), c: clip(x.PBANC_CONT, 700) }));
+  writeFileSync(resolve(OUT, 'letters.json'), JSON.stringify({ at: new Date().toISOString().slice(0, 10), total: j.body?.totalCount || items.length, items: out }));
+  console.log(`안전성 서한: 전체 ${j.body?.totalCount}건 중 최근 ${out.length}건 (가장 새 것 ${out[0] && out[0].d})`);
+}
+
+main().catch((e) => { console.error(e.message || e); process.exitCode = 1; }).then(() => cvs().catch((e) => console.warn(`::warning::안전상비의약품을 건너뜁니다: ${e.message}`)))
+  .then(() => letters().catch((e) => console.warn(`::warning::안전성 서한을 건너뜁니다: ${e.message}`)));
