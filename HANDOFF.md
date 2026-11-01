@@ -1,7 +1,7 @@
 # 필파인더 — 세션 핸드오프
 
 - 최종 갱신: 2026-10-28
-- 현재 버전: **v1.17.0** — 배포됨: https://gcode77.github.io/pillfinder/ (저장소 GCODE77/pillfinder)
+- 현재 버전: **v1.18.0** — 배포됨: https://gcode77.github.io/pillfinder/ (저장소 GCODE77/pillfinder)
 - 저작권: © GLORY KIM
 - 형제 앱: `../약 계수하기`(필카운터, https://gcode77.github.io/pillcounter/) — 같은 디자인·배포 방식
 
@@ -154,6 +154,7 @@ node tests/make-demo.js              # 데모 데이터 다시 만들기
 - v1.11.4: 비슷한 약 정렬은 **분할선 일치 등급이 먼저**(같음 > 있는데 종류 모름 > 다름, `lineTier`), 그 안에서 크기·생김새 점수 순. 분할선 약이 크기가 조금 더 어긋나도 매끈한 약보다 위.
 - v1.12.0 비교 담기 개선: ① 카드(내 약 탭 제외)를 **꾹 누르면(0.5초) 비교에 담김**(진동·토스트). ② 담는 중(`body.cmpmode`)에는 카드를 **눌러도 담기/빼기**, 상세는 카드의 '상세 ›'. 담긴 카드는 청록 테두리. ③ 상세 화면에서 비슷한 약을 처음 담으면 **지금 보는 약이 ①로 자동 포함**. 담긴 약 이름은 트레이에 ①②③으로 표시.
 - v1.12.1 가독성(글자 크기는 그대로): `index.html` 끝의 "가시성·가독성" CSS 블록. 흐린 글자(`--dim`)와 경계선 대비 상향, 제목 왼쪽 노랑 막대, 카드에 경계·그림자와 특징 칩(모양·색·각인), 점수 칸 구분선, 상세 표 행 간격·구분선, 효능·용법은 각각 둥근 상자(접힌 채 눌러서 펼침·펼치면 노랑 테두리), 안내문 위 구분선, 키보드 포커스 윤곽. 모바일(≤480px)은 카드 사진을 76×56으로 줄여 본문 폭(약 145px)을 확보 — 카드 간격·점수 칸을 늘리면 본문이 좁아져 칩이 한 줄에 하나씩 쌓이니 주의.
+- v1.18.0: **안전상비의약품(편의점 판매 13품목)**. `SafeStadDrugService/getSafeStadDrugInq`(JSON, 필드 PRDLST_NM·BSSH_NM·VLD_PRD_YMD·STRG_MTH_CONT·BIZRNO). `build-recall.mjs`의 `cvs()`가 이름(괄호 제거·밀리그램→mg·공백 제거)+업체로 낱알 약과 맞춰 `data/cvs.json`(`{at,total,seqs,names}`)을 만든다(업체 불일치 시 이름만 같은 약 ≤3개면 채택, 못 맞춘 이름은 로그). 앱: `data.cvs`(Set) → 카드·상세 '편의점' 뱃지, 상세 구분 줄, 비슷한 약 찾기 '편의점에서 살 수 있는 약만' 칩(`#simCvs`). 이번에 확인한 API: **약국** `B552657/ErmctInsttInfoInqireService/getParmacyFullDown`(전국 약국 이름·주소·전화·요일별 영업시간·위경도, XML 기본이라 JSON은 `_type=json`)·`getParmacyListInfoInqire`(Q0 시도·Q1 시군구). 약국 찾기 기능은 데이터가 커서(약 2만 4천 곳) 아직 안 붙임. 의약외품·안전성서한·한약 회수는 후보 이름으로 못 찾음.
 - v1.17.0: **회수·판매중지**. 엔드포인트 `MdcinRtrvlSleStpgeInfoService05/getMdcinRtrvlSleStpgeItem05`(전체 985건, numOfRows 500 상한, JSON은 `items:[{item:{…}}]`로 한 겹 싸여 옴). 필드: ENTRPS·PRDUCT·RTRVL_RESN(사유)·RECALL_COMMAND_DATE(회수명령일)·MNFCTUR_NO(제조번호)·USGPD·PACKNG_UNIT·RM·OPEN_END_DATE·BIZRNO·STD_CD·**ITEM_SEQ**(낱알 품목코드와 같음). `scripts/build-recall.mjs`가 `data/recall.json`(`{at,total,items:{seq:[[ymd,사유,제조번호]…]}}`, 품목당 최신 5건)을 만든다. **캐시 없이 배포할 때마다** 받고(deploy.yml '회수·판매중지 받기', continue-on-error), 그래서 **매일 05:30(KST) cron**을 추가해 캐시된 낱알 데이터 위에 회수만 새로 얹어 재배포한다(주간 cron은 그대로). 앱: `loadData`가 recall.json을 같이 읽어 `data.recall`, 카드·상세·비교 머리에 '회수' 뱃지, 상세에 빨간 '회수·판매중지 이력' 박스(`recallBox`), 비교표 '회수 이력' 줄. 아직 못 붙인 승인 API: 한약(생약)제제 회수, 의약품안전성서한, 안전상비의약품, 의약외품 허가, 국립중앙의료원 약국 정보(엔드포인트 이름 미확인).
 - v1.16.0: ① 비교 화면 그림 개편 — `overlaySvg(rs, view)`·`pillEl`·`drawOvl`: 배치(겹쳐/나란히)×표현(윤곽/실제 색·모양)을 `#ovLayout`·`#ovStyle` 분할 버튼으로 전환(`pf.cmpview`에 저장), ①②③ 개별 켜기/끄기 `#ovTog`(`cmpView.off`, 비교 묶음이 바뀌면 초기화). 모양 분류 11종을 실제 도형으로(반원·삼각·마름모·오각·육각·팔각 포함), 실제 색은 `SWATCH`+`dbColors`(두 색이면 반반), 분할선·각인 표시(겹침에선 보이는 약이 1개일 때만 각인). **사진 윤곽은 못 씀**: nedrug 사진 서버가 CORS를 막아 브라우저 캔버스로 픽셀을 읽을 수 없다(빌드 때 내려받아 윤곽을 따로 만드는 방법은 이미지 25k장 다운로드 필요해 보류). ② 비슷한 약 카드의 '차이 …' 줄을 카드 전체 폭 한 줄로(`.cardnote`, 카드 `flex-wrap`), 모바일 `.app` 좌우 여백 14→7px.
 - v1.15.1: DUR 문구 앞뒤 따옴표 제거. 실제 배포 데이터로 확인: dur.json 성분 626·품목 14,590·분할주의 2,038·병용쌍 600(470KB), 허가 상태 428(만료 249·취하 151·취소 15·폐업 12·행정취소 1)·수입 945·마약류 231·희귀 110.

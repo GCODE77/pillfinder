@@ -58,4 +58,27 @@ async function main() {
   console.log(`회수·판매중지: 전체 ${rows.length}건 중 낱알 약 ${Object.keys(items).length}개`);
 }
 
-main().catch((e) => { console.error(e.message || e); process.exit(1); });
+// 안전상비의약품(편의점에서 살 수 있는 13품목): 이름·업체로 낱알 약과 맞춘다 → data/cvs.json
+async function cvs() {
+  const q = new URLSearchParams({ serviceKey: KEY, type: 'json', pageNo: '1', numOfRows: '100' });
+  const j = JSON.parse(await (await fetch(`https://apis.data.go.kr/1471000/SafeStadDrugService/getSafeStadDrugInq?${q}`, { signal: AbortSignal.timeout(60000) })).text());
+  const eh = j.OpenAPI_ServiceResponse?.cmmMsgHeader; if (eh) throw new Error(`API 오류: ${eh.returnAuthMsg || eh.errMsg}`);
+  let items = j.body?.items ?? []; if (!Array.isArray(items)) items = items.item ? [].concat(items.item) : [items];
+  items = items.map((x) => x.item ?? x);
+  const norm = (t) => String(t || '').replace(/\([^)]*\)/g, '').replace(/밀리그램|밀리그람/g, 'mg').replace(/[\s·.]/g, '').toLowerCase();
+  const co = (t) => String(t || '').replace(/\(주\)|주식회사|\s/g, '');
+  const pills = JSON.parse(readFileSync(resolve(OUT, 'pills.json'), 'utf8'));
+  const seqs = [], un = [];
+  for (const it of items) {
+    const key = norm(it.PRDLST_NM), c = co(it.BSSH_NM);
+    const hit = pills.filter((p) => norm(p.n) === key && (!c || co(p.e) === c));
+    let hit2 = hit.length ? hit : pills.filter((p) => norm(p.n).startsWith(key) && (!c || co(p.e) === c));
+    // 업체명이 데이터마다 다를 수 있어(판매사 변경 등) 이름만으로도 한 번 더: 이름이 같은 약이 3개 이하일 때만
+    if (!hit2.length) { const byName = pills.filter((p) => norm(p.n) === key); if (byName.length && byName.length <= 3) hit2 = byName; }
+    if (hit2.length) seqs.push(...hit2.map((p) => p.s)); else un.push(it.PRDLST_NM);
+  }
+  writeFileSync(resolve(OUT, 'cvs.json'), JSON.stringify({ at: new Date().toISOString().slice(0, 10), total: items.length, seqs: [...new Set(seqs)], names: items.map((x) => x.PRDLST_NM) }));
+  console.log(`안전상비의약품: ${items.length}품목 → 낱알 ${new Set(seqs).size}개 맞춤${un.length ? ', 못 맞춤: ' + un.join(', ') : ''}`);
+}
+
+main().catch((e) => { console.error(e.message || e); process.exitCode = 1; }).then(() => cvs().catch((e) => console.warn(`::warning::안전상비의약품을 건너뜁니다: ${e.message}`)));

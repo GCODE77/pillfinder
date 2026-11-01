@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.17.0';
+const APP_VERSION = '1.18.0';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -56,11 +56,13 @@ const data = { db: [], bySeq: new Map(), meta: null, ready: false, shards: new M
 
 async function loadData() {
   try {
-    const [meta, db, rc] = await Promise.all([
+    const [meta, db, rc, cv] = await Promise.all([
       fetch(BASE + 'meta.json', { cache: 'no-cache' }).then((r) => { if (!r.ok) throw 0; return r.json(); }),
       fetch(BASE + 'pills.json').then((r) => { if (!r.ok) throw 0; return r.json(); }),
       fetch(BASE + 'recall.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),   // 회수·판매중지(없어도 앱은 동작)
+      fetch(BASE + 'cvs.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),   // 안전상비의약품(편의점 판매)
     ]);
+    data.cvs = new Set((cv && cv.seqs) || []);
     data.meta = meta; data.db = db; data.recall = (rc && rc.items) || {}; data.recallAt = rc && rc.at;
     for (const r of db) data.bySeq.set(r.s, r);
     data.ready = true;
@@ -112,7 +114,7 @@ const imgOf = (r, big) => (r.img ? `<img src="${esc(r.img)}" alt="" loading="laz
 // 허가 상태(취하·유효기간만료 등)·수입·마약류·희귀 표시: 허가정보에서 온 값이라 데이터를 새로 받아야 생긴다
 const statTxt = (r) => (r.st ? `허가 ${r.st}` : '');
 const otcBadge = (r) => (r.o ? `<span class="badge ${/전문/.test(r.o) ? 'etc' : 'otc'}">${esc(/전문/.test(r.o) ? '전문' : '일반')}</span>` : '') +
-  (data.recall && data.recall[r.s] ? '<span class="badge off">회수</span>' : '') + (r.st ? `<span class="badge off">${esc(statTxt(r))}</span>` : '') + (r.nk ? `<span class="badge nk">${esc(r.nk === '한외마약' ? '한외마약' : r.nk + '(마약류)')}</span>` : '') + (r.im ? '<span class="badge im">수입</span>' : '') + (r.ra ? '<span class="badge ra">희귀</span>' : '');
+  (data.recall && data.recall[r.s] ? '<span class="badge off">회수</span>' : '') + (data.cvs && data.cvs.has(r.s) ? '<span class="badge cvs">편의점</span>' : '') + (r.st ? `<span class="badge off">${esc(statTxt(r))}</span>` : '') + (r.nk ? `<span class="badge nk">${esc(r.nk === '한외마약' ? '한외마약' : r.nk + '(마약류)')}</span>` : '') + (r.im ? '<span class="badge im">수입</span>' : '') + (r.ra ? '<span class="badge ra">희귀</span>' : '');
 const won = (v) => `${Math.round(v).toLocaleString()}원`;
 const priceTxt = (r) => (r.pr ? `약가 ${won(r.pr)}/${r.pu || '개'}` : '');
 // 약가가 없는 약: 일반의약품은 약국마다 값이 달라 공식 가격이 없고, 전문의약품은 약가 자료에 없는 경우
@@ -831,7 +833,7 @@ async function showItem(seq) {
   document.title = `${r.n} — 필파인더`;
   const isFav = favs.includes(seq);
   const spec = [
-    ['업체', r.e], ['구분', [r.o, r.im && '수입', r.nk && r.nk, r.ra && '희귀의약품'].filter(Boolean).join(' · ')],
+    ['업체', r.e], ['구분', [r.o, r.im && '수입', r.nk && r.nk, r.ra && '희귀의약품', data.cvs && data.cvs.has(r.s) && '편의점 판매(안전상비의약품)'].filter(Boolean).join(' · ')],
     ['허가 상태', r.st ? `${r.st}${r.cd ? ` (${r.cd.slice(0, 4)}.${+r.cd.slice(4, 6)}.${+r.cd.slice(6)})` : ''} — 더 이상 만들어지지 않거나 약국에서 구하기 어려울 수 있어요. 약사에게 확인하세요.` : ''],
     ['분류', r.cl], ['제형', r.f], ['모양', r.sh],
     ['색', M.dbColors(r).join(', ')], ['각인 앞', r.pf], ['각인 뒤', r.pb], ['마크', [r.mf, r.mb].filter(Boolean).join(' / ')],
@@ -876,6 +878,7 @@ async function showItem(seq) {
       </div>
       <div class="bar">
         <button class="chip ${M.isOtc(r) ? '' : 'on'}" id="simOtc">처방전 없이 살 수 있는 일반의약품만</button>
+        ${data.cvs && data.cvs.size ? '<button class="chip" id="simCvs">편의점에서 살 수 있는 약만</button>' : ''}
         <button class="chip hidden" id="simOff"></button>
         <select class="text" id="simSort"><option value="">${'닮은 순'}</option><option value="price">싼 순 (보험 약가)</option></select>
       </div>
@@ -909,7 +912,7 @@ async function showItem(seq) {
     toast('기억했습니다. 내 약에도 저장했어요');
   });
   // 비슷한 약: 생김새(크기·모양·색·제형) / 같은 성분, 일반의약품만, 싼 순
-  const sim = { mode: 'size', otc: !M.isOtc(r), sort: '', form: true, shape: true, line: true, coat: false, off: false };
+  const sim = { mode: 'size', otc: !M.isOtc(r), sort: '', form: true, shape: true, line: true, coat: false, off: false, cvs: false };
   const mmd = (v) => { if (v === null) return ''; const x = Math.round(v * 100) / 100; return `${x > 0 ? '+' : x < 0 ? '−' : '±'}${Math.abs(x).toFixed(2)}`; };
   const drawSim = () => {
     let list, note;
@@ -934,6 +937,7 @@ async function showItem(seq) {
     // 허가가 끝난 약(취하·유효기간만료 등)은 구하기 어려우니 기본으로 뺀다
     const nOff = list.filter((x) => x.r.st).length;
     if (!sim.off) list = list.filter((x) => !x.r.st);
+    if (sim.cvs) list = list.filter((x) => data.cvs.has(x.r.s));
     const offBtn = $('#simOff'); if (offBtn) { offBtn.classList.toggle('hidden', !nOff && !sim.off); offBtn.textContent = sim.off ? '허가 끝난 약 포함 중' : `허가 끝난 약 ${nOff}개 숨김 · 보기`; offBtn.classList.toggle('on', sim.off); }
     if (sim.sort === 'price') list = list.slice().sort((a, b) => (a.r.pr ?? 1e12) - (b.r.pr ?? 1e12));
     $('#simNote').textContent = note;
@@ -941,6 +945,7 @@ async function showItem(seq) {
   };
   $('#item').querySelectorAll('[data-sim]').forEach((b) => b.addEventListener('click', () => { sim.mode = b.dataset.sim; $('#item').querySelectorAll('[data-sim]').forEach((c) => c.classList.toggle('on', c === b)); drawSim(); }));
   $('#simOtc').addEventListener('click', (e) => { sim.otc = !sim.otc; e.currentTarget.classList.toggle('on', sim.otc); drawSim(); });
+  if ($('#simCvs')) $('#simCvs').addEventListener('click', (e) => { sim.cvs = !sim.cvs; e.currentTarget.classList.toggle('on', sim.cvs); drawSim(); });
   $('#simOff').addEventListener('click', () => { sim.off = !sim.off; drawSim(); });
   $('#simSort').addEventListener('change', (e) => { sim.sort = e.target.value; drawSim(); });
   for (const k of ['form', 'shape', 'line', 'coat']) if ($('#sim' + k[0].toUpperCase() + k.slice(1))) $('#sim' + k[0].toUpperCase() + k.slice(1)).addEventListener('click', (e) => { sim[k] = !sim[k]; e.currentTarget.classList.toggle('on', sim[k]); drawSim(); });
