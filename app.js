@@ -3,7 +3,7 @@ import { readImprint, warmUpOcr } from './ocr.js';
 import * as SH from './share.js';
 import { shapeTile, formTile } from './shapes.js';
 
-const APP_VERSION = '1.19.0';
+const APP_VERSION = '1.20.0';
 const V = window.Vision, M = window.Match;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -865,6 +865,7 @@ async function showItem(seq) {
       <a class="btn secondary" href="#/pharm">근처 약국 찾기</a>
       <a class="btn secondary" target="_blank" rel="noopener" href="https://www.health.kr/searchResult?search_value=${encodeURIComponent(r.n.replace(/\(.*$/, ''))}">약학정보원에서 보기</a>
     </div>
+    ${buyBoxHtml(r)}
     <div class="simbox">
       <h2>비슷한 약 찾기</h2>
       <div class="bar">
@@ -956,6 +957,7 @@ async function showItem(seq) {
   $('#shareBtn').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(location.href); toast('링크를 복사했습니다'); } catch { toast(location.href, 4000); }
   });
+  buyInit(r);
   loadDur().then((dur) => { if (dur && location.hash === '#/item/' + encodeURIComponent(seq)) renderDur($('#durBox'), seq, dur); });
   const d = await detailOf(seq);
   if (location.hash !== '#/item/' + encodeURIComponent(seq)) return;
@@ -1029,6 +1031,21 @@ async function phLoadCells(lat, lon) {
   await Promise.all(keys.filter((k) => !ph.cells.has(k)).map((k) => fetch(`${BASE}ph/${k}.json`).then((r) => (r.ok ? r.json() : [])).catch(() => []).then((v) => ph.cells.set(k, v))));
   return keys.flatMap((k) => ph.cells.get(k) || []);
 }
+const phKm = (v) => (v < 1 ? `${Math.round(v * 10) * 100}m` : `${v.toFixed(1)}km`);
+function phCard({ r, km: d, o }) {
+  const tel = r[2].replace(/[^\d+]/g, ''), nm = encodeURIComponent(r[0]);
+  return `<div class="phcard"><div class="ph1"><b>${esc(r[0])}</b><span class="phst ${o.st}">${esc(o.txt)}</span></div>
+      <div class="ph2">${esc(r[1])}</div>
+      <div class="ph3">${esc(phKm(d))}${o.today ? ` · ${esc(o.today)}` : ''}</div>
+      <div class="ph4">${tel ? `<a class="chip" href="tel:${esc(tel)}">전화 ${esc(r[2])}</a>` : ''}<a class="chip" target="_blank" rel="noopener" href="https://map.kakao.com/link/to/${nm},${r[3]},${r[4]}">길찾기</a><a class="chip" target="_blank" rel="noopener" href="https://map.kakao.com/link/map/${nm},${r[3]},${r[4]}">지도</a></div></div>`;
+}
+// 약 상세 '이 약 사러 가기': 지금 영업 중인 가까운 약국 n곳. 재고는 알 수 없어 전화 문의를 권한다
+async function phNearOpen(lat, lon, n) {
+  const all = await phLoadCells(lat, lon);
+  if (all === null) return null;
+  const now = phKst();
+  return all.map((r) => ({ r, km: phDist(lat, lon, r[3], r[4]), o: phOpen(r, now) })).filter((x) => x.o.st === 'on' && x.km <= 15).sort((p, q) => p.km - q.km).slice(0, n);
+}
 async function phSearch() {
   const box = $('#phList'), note = $('#phNote');
   if (!ph.loc) { box.innerHTML = ''; note.textContent = '“내 위치로 찾기”를 누르거나 아래에서 지역을 고르세요.'; return; }
@@ -1046,14 +1063,7 @@ async function phSearch() {
   const shown = list.slice(0, 40);
   const nOpen = list.filter((x) => x.o.st === 'on').length;
   note.textContent = `${ph.from} 기준 ${q ? `“${ph.q.trim()}” ` : '15km 안 '}약국 ${total}곳${ph.onlyOpen || ph.late ? ` 중 조건에 맞는 ${list.length}곳` : ''}${list.length ? `, 가까운 순 ${shown.length}곳 (지금 영업 중 ${nOpen}곳)` : ''}`;
-  const km = (v) => (v < 1 ? `${Math.round(v * 10) * 100}m` : `${v.toFixed(1)}km`);
-  box.innerHTML = shown.length ? shown.map(({ r, km: d, o }) => {
-    const tel = r[2].replace(/[^\d+]/g, ''), nm = encodeURIComponent(r[0]);
-    return `<div class="phcard"><div class="ph1"><b>${esc(r[0])}</b><span class="phst ${o.st}">${esc(o.txt)}</span></div>
-      <div class="ph2">${esc(r[1])}</div>
-      <div class="ph3">${esc(km(d))}${o.today ? ` · ${esc(o.today)}` : ''}</div>
-      <div class="ph4">${tel ? `<a class="chip" href="tel:${esc(tel)}">전화 ${esc(r[2])}</a>` : ''}<a class="chip" target="_blank" rel="noopener" href="https://map.kakao.com/link/to/${nm},${r[3]},${r[4]}">길찾기</a><a class="chip" target="_blank" rel="noopener" href="https://map.kakao.com/link/map/${nm},${r[3]},${r[4]}">지도</a></div></div>`;
-  }).join('') : `<div class="empty-msg">${q ? '그 이름·동네의 약국이 이 근처에 없어요.' : '조건에 맞는 약국이 없어요. 필터를 꺼 보세요.'}</div>`;
+  box.innerHTML = shown.length ? shown.map(phCard).join('') : `<div class="empty-msg">${q ? '그 이름·동네의 약국이 이 근처에 없어요.' : '조건에 맞는 약국이 없어요. 필터를 꺼 보세요.'}</div>`;
 }
 function phEnter() {
   const sel = $('#phSido');
@@ -1086,6 +1096,37 @@ function showLetters() {
     box.innerHTML = d.items.map((x) => `<details><summary><span class="lt">${esc(x.d)}</span> ${esc(x.t)}</summary><div class="txt">${x.s ? `<p><b>${esc(x.s)}</b></p>` : ''}${x.c ? `<p>${esc(x.c)}</p>` : ''}<a class="btn secondary" target="_blank" rel="noopener" href="https://nedrug.mfds.go.kr/bbs/2/">의약품안전나라에서 보기</a></div></details>`).join('') +
       `<div class="hint" style="padding:8px 0">식약처 의약품 안전성 서한 · ${esc(d.at)} 받음 (전체 ${esc(d.total)}건 중 최근 ${d.items.length}건)</div>`;
   });
+}
+
+
+// ---------- 약 상세: 이 약 사러 가기 ----------
+function buyBoxHtml(r) {
+  const otc = M.isOtc(r), cvs = data.cvs && data.cvs.has(r.s), nm = r.n.replace(/\(.*$/, '').trim();
+  if (!otc) return `<div class="buybox"><h2>이 약 사러 가기</h2><div class="hint">전문의약품은 의사의 처방전이 있어야 약국에서 받을 수 있어요. 처방전을 받은 병원 근처 약국이나 아래 약국 찾기에서 약국을 골라 전화로 재고를 먼저 확인하세요.</div><div class="row" style="margin-top:8px"><a class="btn secondary" href="#/pharm">근처 약국 찾기</a></div></div>`;
+  return `<div class="buybox"><h2>이 약 사러 가기</h2>
+    <div class="hint">${cvs ? '이 약은 <b>편의점</b>에서도 살 수 있는 안전상비의약품이에요. 약국에서도 살 수 있어요.<br>' : '처방전 없이 약국에서 살 수 있어요.<br>'}약국마다 갖추고 있는 약이 달라서 <b>재고는 알 수 없어요.</b> 가기 전에 전화로 “${esc(nm)}” 있는지 먼저 물어보세요.</div>
+    <div class="row" style="margin-top:8px"><button class="primary" id="buyLoc">내 위치에서 지금 영업 중인 약국 보기</button><a class="btn secondary" href="#/pharm">약국 탭에서 더 보기</a></div>
+    <div class="hint" id="buyNote" style="margin-top:6px"></div><div class="list" id="buyList"></div></div>`;
+}
+function buyInit(r) {
+  const btn = $('#buyLoc'); if (!btn) return;
+  const run = async () => {
+    const note = $('#buyNote'), box = $('#buyList');
+    note.textContent = '가까운 약국을 찾는 중…';
+    const list = await phNearOpen(ph.loc[0], ph.loc[1], 3);
+    if (list === null) { note.textContent = '약국 데이터가 아직 없어요.'; return; }
+    note.textContent = list.length ? `${ph.from || '내 위치'} 기준 지금 영업 중인 가까운 약국 ${list.length}곳 — 전화해서 “${r.n.replace(/\(.*$/, '').trim()}” 있는지 확인해 보세요.` : '15km 안에 지금 영업 중인 약국이 없어요. 약국 탭에서 영업 전 약국이나 밤 늦게 하는 약국을 찾아보세요.';
+    box.innerHTML = list.map(phCard).join('');
+  };
+  btn.addEventListener('click', () => {
+    if (ph.loc) { run(); return; }
+    if (!navigator.geolocation) { $('#buyNote').textContent = '이 기기는 위치를 알 수 없어요. 약국 탭에서 지역을 골라 찾으세요.'; return; }
+    $('#buyNote').textContent = '내 위치를 확인하는 중…';
+    navigator.geolocation.getCurrentPosition((p) => { ph.loc = [p.coords.latitude, p.coords.longitude]; ph.from = '내 위치'; run(); },
+      (e) => { $('#buyNote').textContent = e.code === 1 ? '위치 권한이 꺼져 있어요. 약국 탭에서 지역을 골라 찾을 수 있어요.' : '위치를 가져오지 못했어요. 약국 탭에서 지역을 골라 찾으세요.'; },
+      { enableHighAccuracy: false, timeout: 12000, maximumAge: 300000 });
+  });
+  if (ph.loc) run();   // 약국 탭에서 이미 위치를 정했으면 바로 보여 준다
 }
 
 // ---------- 내 약 · 설정 ----------
