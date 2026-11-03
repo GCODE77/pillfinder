@@ -380,6 +380,30 @@
   }
   const normName = (s) => String(s || '').toLowerCase().replace(/[\s\-_.,()[\]·]/g, '');
   const isCho = (s) => /^[ㄱ-ㅎ]+$/.test(s);
+  // 초성이 섞인 검색어("타ㅇ레ㄴ")와 입력 중인 글자("타이렌")를 위해 자모로 푼다
+  const JUNG = 'ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ';
+  const JONG = ' ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ';
+  function jamo(s) {
+    let o = '';
+    for (const ch of s) {
+      const c = ch.charCodeAt(0) - 0xac00;
+      o += c >= 0 && c < 11172 ? CHO[(c / 588) | 0] + JUNG[((c % 588) / 28) | 0] + JONG[c % 28].trim() : ch;
+    }
+    return o;
+  }
+  const hasCho = (s) => /[ㄱ-ㅎ]/.test(s);
+  // 글자 단위 비교: 검색어의 낱자음은 그 자리 글자의 초성과 맞으면 통과. 반환: 일치 시작 위치(없으면 -1)
+  function choMixedIndex(name, q) {
+    const nc = [...name], qc = [...q];
+    for (let i = 0; i + qc.length <= nc.length; i++) {
+      let ok = true;
+      for (let j = 0; j < qc.length && ok; j++) ok = /[ㄱ-ㅎ]/.test(qc[j]) ? choseong(nc[i + j]) === qc[j] : nc[i + j] === qc[j];
+      if (ok) return i;
+    }
+    return -1;
+  }
+  const choCache = new Map(), jamoCache = new Map();
+  const cacheGet = (m, k, f) => { let v = m.get(k); if (v === undefined) { v = f(k); m.set(k, v); } return v; };
 
   // items: [{n, e, en, s, ...}] → 이름·업체·영문명·각인으로
   function searchName(items, query, limit = 60) {
@@ -392,8 +416,11 @@
       const n = normName(r.n);
       let sc = 0;
       if (cho) {
-        const c = choseong(n);
+        const c = cacheGet(choCache, n, choseong);
         if (c.startsWith(q)) sc = 80; else if (c.includes(q)) sc = 50;
+      } else if (hasCho(q)) {
+        const i = choMixedIndex(n, q);
+        if (i === 0) sc = 85; else if (i > 0) sc = 55;
       } else {
         if (n.startsWith(q)) sc = 100 - Math.min(30, n.length - q.length);
         else if (n.includes(q)) sc = 70 - Math.min(30, n.length - q.length);
@@ -401,6 +428,7 @@
         else if (r.e && normName(r.e).includes(q)) sc = 30;
         else if (qi.length >= 2 && (normImprint(r.pf) === qi || normImprint(r.pb) === qi)) sc = 45;
         else if (r.ingr && normName(r.ingr).includes(q)) sc = 40;
+        else if (/[가-힣]$/.test(q) && cacheGet(jamoCache, n, jamo).includes(jamo(q))) sc = 35;   // 입력 중인 끝 글자(타이렌 → 타이레놀)
       }
       if (sc) out.push({ r, sc });
     }
