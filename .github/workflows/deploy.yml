@@ -104,6 +104,13 @@ jobs:
         env:
           SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
         run: node scripts/build-recall.mjs
+      # Supabase 무료 프로젝트는 7일간 접속이 없으면 일시정지된다. 매일 도는 이 배포에서 공유 학습 표를 한 번 읽어 깨워 둔다
+      - name: Supabase 깨우기
+        continue-on-error: true
+        run: |
+          u=$(grep -o "supabaseUrl: '[^']*'" config.js | cut -d"'" -f2)
+          k=$(grep -o "anonKey: '[^']*'" config.js | cut -d"'" -f2)
+          [ -n "$u" ] && curl -fsS -m 30 -o /dev/null -w "Supabase %{http_code}\n" "$u/rest/v1/confirmations?select=id&limit=1" -H "apikey: $k" -H "Authorization: Bearer $k"
       - name: 올릴 파일 고르기
         run: |
           mkdir -p _site
